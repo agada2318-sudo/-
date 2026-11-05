@@ -17,9 +17,6 @@ import {
   Zap,
   ArrowLeft,
   Pencil,
-  Sprout,
-  Rocket,
-  Cpu,
   ChevronLeft,
   ChevronRight,
   Settings2,
@@ -51,15 +48,29 @@ const PRIMARY_BTN =
   'py-3 text-sm font-bold text-white bg-[#7C6CF6] hover:bg-[#6B5AE8] disabled:opacity-40 disabled:cursor-not-allowed rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap';
 import { buildFallbackAnalysis } from './utils/codeAnalyzer.ts';
 
+// 레벨 아이콘: 막대 3개 중 채워진 개수로 수준 표시 (초급 1칸 · 중급 2칸 · 전공 3칸)
+function LevelBars({ filled, active }: { filled: number; active: boolean }) {
+  const on = active ? '#A99CFF' : '#9AA0B8';
+  const off = active ? 'rgba(169,156,255,0.25)' : '#3A3F57';
+  const heights = [6, 11, 16];
+  return (
+    <svg width="18" height="16" viewBox="0 0 18 16" aria-hidden="true">
+      {heights.map((h, i) => (
+        <rect key={i} x={i * 6.5} y={16 - h} width="4.5" height={h} rx="1.2" fill={i < filled ? on : off} />
+      ))}
+    </svg>
+  );
+}
+
 const LEVELS: {
   id: UserLevel;
   label: string;
   desc: string;
-  Icon: typeof Sprout;
+  bars: number;
 }[] = [
-  { id: 'beginner', label: '초급자', desc: '정의를 쉬운 말로', Icon: Sprout },
-  { id: 'intermediate', label: '중급자', desc: '작동 원리 중심', Icon: Rocket },
-  { id: 'advanced', label: '전공자', desc: '기술 분석 · 결함 진단', Icon: Cpu },
+  { id: 'beginner', label: '초급자', desc: '정의를 쉬운 말로', bars: 1 },
+  { id: 'intermediate', label: '중급자', desc: '작동 원리 중심', bars: 2 },
+  { id: 'advanced', label: '전공자', desc: '기술 분석 · 결함 진단', bars: 3 },
 ];
 
 export default function App() {
@@ -597,7 +608,7 @@ export default function App() {
             <div className="p-4 sm:p-5 flex flex-col gap-4">
               {/* 레벨 선택 카드 */}
               <div className="grid grid-cols-3 gap-2.5" role="tablist" aria-label="설명 수준 선택">
-                {LEVELS.map(({ id, label, desc, Icon }) => {
+                {LEVELS.map(({ id, label, desc, bars }) => {
                   const active = level === id;
                   return (
                     <button
@@ -612,7 +623,7 @@ export default function App() {
                           : 'bg-[#232637] border-[#30344A] hover:border-[#4A4F6A]'
                       }`}
                     >
-                      <Icon className={`w-4 h-4 ${active ? 'text-[#A99CFF]' : 'text-[#9AA0B8]'}`} />
+                      <LevelBars filled={bars} active={active} />
                       <span className={`text-sm font-bold ${active ? 'text-white' : 'text-[#D5D8E5]'}`}>
                         {label}
                       </span>
