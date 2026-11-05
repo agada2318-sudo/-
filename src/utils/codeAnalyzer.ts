@@ -5,6 +5,10 @@ import {
   SimpleCodeAnalysis,
   TokenBreakdown,
 } from '../types.ts';
+import { describeCodeForBeginner, describeHtmlByDefinition, josa, TAG_DEFINITIONS } from './beginnerDescriber.ts';
+import { cssLevelDepth, describeCssLine, looksLikeCss, CssLineResult, CssDecl } from './cssDescriber.ts';
+import { checkDocument, checkLine, SyntaxError as SyntaxCheckError } from './syntaxChecker.ts';
+import { collectDeclared } from './jsTypoChecker.ts';
 
 interface TagMasterInfo {
   name: string;
@@ -540,76 +544,741 @@ export function extractHtmlTokens(trimmed: string): TokenBreakdown[] {
   return tokens;
 }
 
-export function detectLineSyntaxError(line: string): { hasError: boolean; errorDetail?: string } {
-  const trimmed = line.trim();
-  if (!trimmed) return { hasError: false };
-
-  // 1) HTML 닫는 괄호 누락 (태그가 열렸는데 안 닫힘: <div, <input ... 등)
-  if (trimmed.startsWith('<') && !trimmed.endsWith('>') && !trimmed.includes('>')) {
-    return {
-      hasError: true,
-      errorDetail: '태그 끝을 닫는 괄호(>)가 누락되었습니다. <태그> 형태로 완성해야 합니다.',
-    };
-  }
-
-  // 2) 여는 괄호 누락 (div>, /div> 등)
-  if (!trimmed.startsWith('<') && trimmed.endsWith('>')) {
-    return {
-      hasError: true,
-      errorDetail: '태그 시작 괄호(<)가 누락되었습니다. <' + trimmed + ' 형태로 열어야 합니다.',
-    };
-  }
-
-  // 3) HTML 따옴표 불일치 속성 (class="test, id='test 등)
-  if (
-    (trimmed.match(/"/g)?.length || 0) % 2 !== 0 ||
-    (trimmed.match(/'/g)?.length || 0) % 2 !== 0
-  ) {
-    return {
-      hasError: true,
-      errorDetail: '속성값이나 문자열의 따옴표(" 또는 \') 짝이 맞지 않아 닫히지 않았습니다.',
-    };
-  }
-
-  // 4) JS 등호/연산자 오타 (let a == 5, const = 5 등)
-  if (/^(let|const|var)\s*=\s*/.test(trimmed)) {
-    return {
-      hasError: true,
-      errorDetail: '변수 키워드(let/const) 뒤에 변수 이름이 누락되었습니다.',
-    };
-  }
-  if (/^(let|const|var)\s+[a-zA-Z0-9_$]+\s*==\s*/.test(trimmed)) {
-    return {
-      hasError: true,
-      errorDetail: '변수에 값을 대입할 때는 ==(비교)가 아닌 =(대입)을 사용해야 합니다.',
-    };
-  }
-
-  // 5) JS 괄호 짝 불일치
-  const openParens = (trimmed.match(/\(/g) || []).length;
-  const closeParens = (trimmed.match(/\)/g) || []).length;
-  if (openParens !== closeParens) {
-    return {
-      hasError: true,
-      errorDetail: '소괄호 ()의 열림/닫힘 개수가 맞지 않습니다.',
-    };
-  }
-
-  // 6) 닫는 슬래시 오타 (<div/ > 또는 </div 등)
-  if (/^<[a-zA-Z0-9-]+\/\s*>/.test(trimmed) === false && /^<[a-zA-Z0-9-]+\/$/.test(trimmed)) {
-    return {
-      hasError: true,
-      errorDetail: '슬래시(/) 위치가 잘못되었습니다. 닫는 태그는 </태그> 형태여야 합니다.',
-    };
-  }
-
-  return { hasError: false };
+// =========================================================
+// 레벨별 깊이 차별화
+//  - 중급자: 정의 대신 "작동 원리". 간단한 기본 코드는 isBasic=true로 생략.
+//  - 전공자: IT 전문 용어 기반 기술 분석.
+// =========================================================
+interface LevelDepth {
+  isBasic: boolean;
+  howItWorks: string;
+  technicalDetail: string;
 }
+
+const HTML_LEVEL_DEPTH: Record<string, LevelDepth> = {
+  '!doctype': {
+    isBasic: true,
+    howItWorks:
+      '브라우저는 문서를 읽기 시작할 때 첫 줄을 보고 렌더링 방식을 고릅니다. DOCTYPE이 있으면 표준 모드, 없으면 옛날 호환 모드로 CSS 크기 계산을 합니다.',
+    technicalDetail:
+      'HTML Living Standard의 tokenization 단계에서 DOCTYPE 토큰이 emit되면 Document의 compatibility mode가 "no-quirks"로 설정됩니다. 누락 시 quirks mode로 폴백되어 box model, line-height, table 셀 높이 계산 등에 CSS 2.1 이전 레거시 동작이 적용됩니다.',
+  },
+  html: {
+    isBasic: true,
+    howItWorks:
+      '브라우저가 만드는 DOM 트리의 가장 위(루트) 노드가 됩니다. lang 값은 번역 기능과 스크린리더 발음 판단에 쓰입니다.',
+    technicalDetail:
+      'Document의 documentElement(루트 노드)를 생성합니다. lang 속성은 BCP 47 언어 태그로 해석되어 스크린리더 TTS 엔진의 음성 프로파일, CSS :lang() 셀렉터, hyphens: auto 하이픈 처리, 브라우저 자동 번역 휴리스틱에 사용됩니다. 누락 시 WCAG 3.1.1(Language of Page) 위반입니다.',
+  },
+  head: {
+    isBasic: true,
+    howItWorks:
+      '이 안의 내용은 화면에 그려지지 않고, 브라우저가 페이지를 그리기 전에 먼저 읽는 설정 정보로 쓰입니다.',
+    technicalDetail:
+      'Metadata content 컨테이너로 렌더 트리에 포함되지 않습니다(display: none). 내부의 동기 <script>와 <link rel="stylesheet">는 render-blocking 리소스로 First Contentful Paint를 지연시키므로 defer/async, preload 전략이 중요합니다.',
+  },
+  meta: {
+    isBasic: false,
+    howItWorks:
+      '브라우저는 받은 파일의 바이트를 글자로 바꾸는(디코딩) 규칙을 이 줄을 보고 결정합니다. 그래서 <head>의 맨 앞쪽에 있어야 한글이 깨지지 않고, 늦게 나오면 페이지를 처음부터 다시 읽을 수도 있습니다.',
+    technicalDetail:
+      'Encoding sniffing 알고리즘은 BOM → HTTP Content-Type 헤더 → <meta charset> prescan 순으로 문자 인코딩을 결정합니다. prescan은 첫 1024 bytes만 검사하므로 그 이후 선언은 무시되거나 reparse를 유발합니다. 모바일 대응을 위해 viewport 메타(width=device-width)도 함께 선언해야 합니다.',
+  },
+  title: {
+    isBasic: false,
+    howItWorks:
+      '브라우저는 title 안의 글자를 본문에 그리지 않고 탭 제목, 즐겨찾기 이름, 방문 기록, 검색 결과 제목으로 가져다 씁니다.',
+    technicalDetail:
+      'document.title로 노출되는 문서 메타데이터로 탭/윈도우 UI, History 엔트리, Open Graph 미지정 시 SNS 크롤러의 fallback 타이틀, SERP 타이틀 링크에 사용됩니다. WCAG 2.4.2(Page Titled) 준수 항목이며 SPA에서는 라우트 전환 시 동적 갱신이 필요합니다.',
+  },
+  body: {
+    isBasic: true,
+    howItWorks:
+      '이 안의 요소들만 실제 화면에 그려집니다. 브라우저는 기본으로 바깥 여백(margin 8px)을 줍니다.',
+    technicalDetail:
+      '렌더 트리의 루트 콘텐츠 박스로 기본 UA 스타일시트에서 margin: 8px이 적용됩니다. window 레벨 이벤트(onload 등)의 핸들러 attribute를 반영하며, 대부분의 이벤트 위임(event delegation)이 이 노드 또는 document에서 처리됩니다.',
+  },
+  div: {
+    isBasic: false,
+    howItWorks:
+      'div는 스스로 의미가 없는 블록 상자입니다. 브라우저가 기본으로 한 줄 전체 폭을 차지하게 그리고, class 이름에 연결된 CSS 규칙이 적용되어 모양과 배치가 정해집니다. 안쪽 요소들은 이 상자를 기준으로 배치됩니다.',
+    technicalDetail:
+      'Flow content를 그루핑하는 non-semantic 요소로 접근성 트리에서 generic role로 매핑됩니다. display: block으로 Block Formatting Context에 참여하며, class 셀렉터는 Style Recalc 단계에서 해시 기반으로 매칭됩니다. 의미 있는 영역이라면 <main>, <section>, <form> 같은 시맨틱 요소로 랜드마크를 제공하는 것이 바람직합니다.',
+  },
+  h1: {
+    isBasic: false,
+    howItWorks:
+      '브라우저는 h1에 큰 글씨와 굵은 글꼴을 기본 스타일로 적용하고, 동시에 문서 구조에서 가장 높은 단계의 제목으로 등록합니다. 스크린리더와 검색엔진은 이 제목 구조를 따라 페이지 주제를 파악합니다.',
+    technicalDetail:
+      'Heading content로 접근성 트리에 role="heading", aria-level=1로 노출되어 스크린리더의 heading navigation(H 키) 대상이 됩니다. SEO 크롤러의 토픽 추출 신호이며, 페이지당 단일 h1과 레벨을 건너뛰지 않는 heading 계층 구조가 권장됩니다(WCAG 1.3.1 Info and Relationships).',
+  },
+  p: {
+    isBasic: false,
+    howItWorks:
+      '브라우저는 p를 블록 상자로 그리고 위아래에 기본 여백(약 1em)을 줍니다. 안의 글자는 상자 폭에 맞춰 자동으로 줄바꿈됩니다.',
+    technicalDetail:
+      'Phrasing content만 허용하는 paragraph 요소입니다. 내부에 flow content(div 등)가 오면 tree construction 단계에서 파서가 암묵적으로 </p>를 삽입해 DOM이 의도와 다르게 분리됩니다. 렌더링 시 Inline Formatting Context가 생성되어 line box 단위로 레이아웃됩니다.',
+  },
+  input: {
+    isBasic: false,
+    howItWorks:
+      'type 값에 따라 브라우저가 서로 다른 입력 UI를 그려줍니다. 사용자가 입력한 값은 요소의 value에 저장되어 있다가, form이 제출될 때 name 속성과 짝지어 서버로 전송됩니다. required가 있으면 제출 직전에 브라우저가 빈칸인지 검사해 전송을 막습니다.',
+    technicalDetail:
+      'Void element로 end tag가 없습니다. required는 Constraint Validation API(validity.valueMissing)로 처리되어 submit 시 invalid 이벤트를 발생시킵니다. name 속성이 없으면 form data set 구성에서 제외되며, <label for> 또는 aria-label 연결이 없으면 accessible name이 비어 WCAG 4.1.2(Name, Role, Value) 위반입니다. placeholder는 label의 대체재가 아닙니다.',
+  },
+  button: {
+    isBasic: false,
+    howItWorks:
+      'form 안의 버튼은 type을 따로 적지 않으면 기본이 "제출(submit)"입니다. 클릭하거나 입력칸에서 Enter를 누르면 브라우저가 form의 입력값을 모아 검사한 뒤 action 주소로 전송하는 submit 이벤트를 발생시킵니다.',
+    technicalDetail:
+      'type 기본값은 "submit"으로 form owner의 implicit submission을 트리거합니다. submit 이벤트는 버블링되며 preventDefault() 후 fetch로 처리하는 SPA 패턴이 일반적입니다. 네이티브 button은 키보드 포커스, Enter/Space 활성화, role=button을 기본 제공하므로 div+onClick 대체는 접근성 회귀를 유발합니다.',
+  },
+};
+
+export function getLevelDepth(line: string): LevelDepth {
+  const trimmed = line.trim();
+
+  if (!trimmed) {
+    return {
+      isBasic: true,
+      howItWorks: '빈 줄은 실행에 아무 영향이 없습니다.',
+      technicalDetail:
+        'Whitespace 토큰으로 HTML에서는 inter-element whitespace, JS에서는 lexer 단계에서 무시됩니다.',
+    };
+  }
+
+  // CSS / JS / Python 주석
+  if (/^(\/\*|\*|\/\/)/.test(trimmed) || /^#\s/.test(trimmed)) {
+    return {
+      isBasic: true,
+      howItWorks: '주석은 실행되지 않으므로 동작에 아무 영향이 없습니다.',
+      technicalDetail:
+        'Comment 토큰은 tokenizer 단계에서 버려져 AST/CSSOM에 포함되지 않으며, 프로덕션 빌드의 minifier(Terser, cssnano 등)가 제거합니다. 단 /*! */ 형태의 라이선스 주석은 보존됩니다.',
+    };
+  }
+
+  // HTML 주석
+  if (trimmed.startsWith('<!--')) {
+    return {
+      isBasic: true,
+      howItWorks: '브라우저는 주석을 화면에 그리지 않습니다.',
+      technicalDetail:
+        'Comment 노드로 DOM에는 남지만 렌더 트리에는 포함되지 않으며, 프로덕션 빌드의 HTML minifier가 제거 대상으로 처리합니다.',
+    };
+  }
+
+  // HTML 닫는 태그
+  if (/^<\/[a-zA-Z0-9-]+>$/.test(trimmed)) {
+    const tag = trimmed.replace(/<\/|>/g, '').toLowerCase();
+    return {
+      isBasic: true,
+      howItWorks: `위에서 연 <${tag}> 구역이 여기서 끝납니다.`,
+      technicalDetail: `End tag 토큰으로 파서의 stack of open elements에서 <${tag}>를 pop합니다. 짝이 맞지 않으면 adoption agency algorithm 등 에러 복구 규칙이 동작해 DOM이 의도와 다르게 재구성될 수 있습니다.`,
+    };
+  }
+
+  // HTML 여는 태그
+  if (trimmed.startsWith('<') && trimmed.includes('>')) {
+    const tag = (trimmed.match(/^<([!a-zA-Z0-9-]+)/)?.[1] || '').toLowerCase();
+    const known = HTML_LEVEL_DEPTH[tag];
+    if (known) return known;
+    return {
+      isBasic: false,
+      howItWorks: `브라우저가 이 줄을 읽으면 <${tag}> 요소를 페이지 구조(DOM 트리)에 추가하고, 기본 스타일과 CSS 규칙을 적용해 화면에 그립니다.`,
+      technicalDetail: `HTML tokenizer가 start tag 토큰을 생성하고 tree construction 단계에서 <${tag}> 요소 노드가 삽입됩니다. 이후 CSSOM과 결합된 Render Tree를 기반으로 Layout → Paint → Composite 파이프라인을 거칩니다.`,
+    };
+  }
+
+  // 괄호만 있는 줄 (블록 닫기 등)
+  if (/^[\]})(;,\s]+$/.test(trimmed)) {
+    return {
+      isBasic: true,
+      howItWorks: '위에서 시작한 블록(묶음)을 닫는 기호입니다.',
+      technicalDetail:
+        'Block/Expression 종료 토큰으로 렉시컬 스코프가 닫히며, 블록 내부의 let/const 바인딩은 이 시점 이후 참조할 수 없습니다.',
+    };
+  }
+
+  // import / export
+  if (/^(import|export)\s/.test(trimmed)) {
+    return {
+      isBasic: true,
+      howItWorks: '다른 파일의 코드를 가져오거나 내보내는 연결 줄입니다.',
+      technicalDetail:
+        'ES Module의 정적 import/export 선언으로 파싱 단계에서 Module Record의 의존성 그래프가 구성되며, 번들러는 이를 기반으로 tree-shaking을 수행합니다.',
+    };
+  }
+
+  // 변수 선언
+  const decl = trimmed.match(/^(const|let|var)\s+/);
+  if (decl) {
+    const keyword = decl[1];
+    return {
+      isBasic: false,
+      howItWorks:
+        '자바스크립트 엔진은 코드를 실행하기 전에 변수 이름을 먼저 등록해 둡니다. 실행 순서가 이 줄에 오면 등호(=) 오른쪽을 계산하고, 그 결과를 변수 이름에 연결합니다. 배열이나 객체라면 변수에는 값 자체가 아니라 그 데이터가 있는 위치가 연결됩니다.' +
+        (keyword === 'const'
+          ? ' const는 이후 다른 값으로 다시 연결하려 하면 오류가 납니다.'
+          : ''),
+      technicalDetail:
+        keyword === 'var'
+          ? 'var는 Variable Environment에 함수 스코프로 호이스팅되어 undefined로 초기화되므로 선언 전 참조가 조용히 통과합니다. 블록 스코프가 없어 클로저 루프 버그와 전역 객체(window) 프로퍼티 오염을 유발할 수 있어 ES2015+ 코드베이스에서는 no-var 린트 규칙으로 금지하는 것이 일반적입니다.'
+          : `${keyword} 키워드는 Lexical Environment에 블록 스코프 바인딩을 생성하며, 초기화 전 구간은 TDZ(Temporal Dead Zone)로 접근 시 ReferenceError가 발생합니다. 객체/배열 리터럴은 힙에 할당되고 변수는 참조만 보유하므로 const여도 내부 mutation은 가능합니다(불변성이 필요하면 Object.freeze 또는 readonly 타입).`,
+    };
+  }
+
+  // 배열 map
+  if (trimmed.includes('.map(')) {
+    return {
+      isBasic: false,
+      howItWorks:
+        'map은 배열의 길이만큼 괄호 안의 함수를 순서대로 호출합니다. 각 호출이 돌려준 값을 같은 순서로 모아 새 배열을 만들고, 원래 배열은 그대로 둡니다.',
+      technicalDetail:
+        'Array.prototype.map은 O(n) 시간 복잡도로 동일 length의 새 배열을 할당하는 non-mutating 고차 함수입니다. sparse array의 hole에서는 콜백이 호출되지 않으며, V8은 elements kind(PACKED_SMI_ELEMENTS 등)가 유지될 때 인라인 캐시와 TurboFan 최적화를 적용합니다. 체이닝 시 중간 배열 할당 비용에 유의해야 합니다.',
+    };
+  }
+
+  // 콘솔 출력
+  if (/console\.(log|error|warn|info)/.test(trimmed)) {
+    return {
+      isBasic: true,
+      howItWorks: '값을 개발자 도구 콘솔에 출력합니다.',
+      technicalDetail:
+        'console은 WHATWG Console Standard의 namespace 객체로 브라우저에서는 DevTools, Node.js에서는 process.stdout/stderr로 출력됩니다. 객체는 live reference로 표시되어 lazy evaluation 이슈가 있으며, 프로덕션 번들에서는 Terser drop_console 등으로 제거하는 것이 일반적입니다.',
+    };
+  }
+
+  // 함수 선언
+  if (/^(async\s+)?function\s|=>\s*\{?$/.test(trimmed)) {
+    return {
+      isBasic: false,
+      howItWorks:
+        '함수는 선언만으로는 실행되지 않습니다. 이름으로 호출되는 순간 괄호 안 값(매개변수)을 받아 블록 안의 코드를 위에서 아래로 실행하고, return 값을 호출한 곳으로 돌려줍니다.',
+      technicalDetail:
+        '함수 객체 생성 시 [[Environment]] 내부 슬롯에 외부 Lexical Environment가 캡처되어 클로저가 형성됩니다. 호출 시 새로운 Execution Context가 콜 스택에 push되며, 화살표 함수는 자체 this/arguments 바인딩이 없어 lexical this를 사용합니다.',
+    };
+  }
+
+  return {
+    isBasic: false,
+    howItWorks:
+      '실행 순서가 이 줄에 오면 엔진이 식을 계산하고, 그 결과로 변수 값이 바뀌거나 다음 동작이 이어집니다.',
+    technicalDetail:
+      '파서가 이 구문을 AST의 Statement 노드로 변환한 뒤 인터프리터(V8 Ignition 등)가 바이트코드로 실행합니다. 반복 실행되는 hot path라면 JIT 컴파일러의 최적화 대상이 됩니다.',
+  };
+}
+
+// =========================================================
+// 초급자용 디테일 해설 생성기
+//  실제 코드 안의 글자(내용)와 속성 값을 그대로 넣어서
+//  "무슨 의미인가요?" / "왜 여기서 사용되었나요?" 문장을 만듭니다.
+//  예) <h1>환영합니다</h1>
+//   → 의미: 제일 큰 글씨로 환영합니다를 출력하는 태그입니다.
+//   → 이유: 이 화면에서 가장 큰 첫번째 제목 글자를 표시하는 태그입니다.
+// =========================================================
+
+// 문장처럼 긴 텍스트는 따옴표로 감싸서 읽기 쉽게
+function q(text: string): string {
+  return /[\s.,!?]/.test(text) ? `'${text}'` : text;
+}
+
+function parseAttributes(tagSource: string): Record<string, string | true> {
+  const attrs: Record<string, string | true> = {};
+  const body = tagSource.replace(/^<[!a-zA-Z0-9-]+/, '').replace(/\/?>[\s\S]*$/, '');
+  const re = /([a-zA-Z_:@][a-zA-Z0-9_:.-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const value = m[2] ?? m[3] ?? m[4];
+    attrs[m[1].toLowerCase()] = value === undefined ? true : value;
+  }
+  return attrs;
+}
+
+// 글자나 이름표에서 "무엇을 하려는 화면인지" 추측
+const PURPOSE_KEYWORDS: [RegExp, string][] = [
+  [/로그인|login|sign-?in/i, '로그인'],
+  [/회원\s*가입|가입|sign-?up|register|join/i, '회원가입'],
+  [/비밀번호|password|\bpw\b/i, '비밀번호'],
+  [/이메일|e-?mail/i, '이메일 주소'],
+  [/아이디|\bid\b|user(name)?/i, '아이디'],
+  [/검색|search/i, '검색'],
+  [/장바구니|cart/i, '장바구니'],
+  [/결제|주문|checkout|pay|order/i, '결제'],
+  [/전화|휴대폰|phone|tel/i, '전화번호'],
+  [/이름|name/i, '이름'],
+  [/메뉴|nav/i, '메뉴'],
+  [/문의|contact/i, '문의'],
+];
+
+function guessPurpose(...texts: (string | undefined)[]): string | null {
+  const joined = texts.filter(Boolean).join(' ');
+  for (const [re, label] of PURPOSE_KEYWORDS) {
+    if (re.test(joined)) return label;
+  }
+  return null;
+}
+
+const HEADING_SIZE: Record<string, string> = {
+  h1: '제일 큰 글씨로',
+  h2: '두 번째로 큰 글씨로',
+  h3: '세 번째로 큰 글씨로',
+  h4: '중간 크기의 제목 글씨로',
+  h5: '작은 제목 글씨로',
+  h6: '가장 작은 제목 글씨로',
+};
+
+const HEADING_ORDER: Record<string, string> = {
+  h1: '가장 큰 첫번째 제목',
+  h2: '두 번째 단계의 소제목',
+  h3: '세 번째 단계의 작은 제목',
+  h4: '네 번째 단계의 작은 제목',
+  h5: '다섯 번째 단계의 작은 제목',
+  h6: '여섯 번째 단계의 가장 작은 제목',
+};
+
+const INPUT_KIND: Record<string, string> = {
+  text: '글자를 직접 입력할 수 있는 한 줄 입력칸',
+  password: '입력한 글자가 ●●● 처럼 가려져 보이는 비밀번호 입력칸',
+  email: '이메일 주소(@가 들어간 형식)만 받는 입력칸',
+  number: '숫자만 입력할 수 있는 입력칸',
+  tel: '전화번호를 입력하는 칸',
+  search: '검색어를 입력하는 칸',
+  url: '인터넷 주소(https://...)를 입력하는 칸',
+  date: '달력에서 날짜를 고를 수 있는 칸',
+  checkbox: '체크(✔) 표시를 할 수 있는 네모 칸',
+  radio: '여러 개 중 하나만 고를 수 있는 동그라미 선택칸',
+  file: '내 컴퓨터의 파일을 골라 올릴 수 있는 버튼',
+  submit: '누르면 내용을 제출하는 버튼',
+  hidden: '화면에는 보이지 않고 몰래 값을 함께 보내는 숨은 칸',
+};
+
+export function describeHtmlForBeginner(
+  trimmed: string,
+  tagName: string
+): { easy: string; why: string } | null {
+  const attrs = parseAttributes(trimmed);
+  const textMatch = trimmed.match(/^<[^>]+>([^<]+)</);
+  const text = textMatch ? textMatch[1].trim() : '';
+  const cls = typeof attrs.class === 'string' ? attrs.class : '';
+  const id = typeof attrs.id === 'string' ? attrs.id : '';
+  const nameTag = cls || id;
+
+  // 제목 h1 ~ h6
+  if (HEADING_SIZE[tagName]) {
+    const size = HEADING_SIZE[tagName];
+    const order = HEADING_ORDER[tagName];
+    const easy = text
+      ? `${size} ${josa(q(text), '을/를')} 출력하는 태그입니다.`
+      : `${size} 제목을 출력하는 태그입니다.`;
+    const why = text
+      ? `이 화면에서 ${order} 글자를 표시하는 태그입니다. 사용자가 이 구역에 들어왔을 때 ${josa(q(text), '을/를')} 가장 먼저 눈에 띄게 보여주려고 사용되었습니다.`
+      : `이 화면에서 ${order} 글자를 표시하는 태그입니다.`;
+    return { easy, why };
+  }
+
+  // 버튼
+  if (tagName === 'button') {
+    const type = typeof attrs.type === 'string' ? attrs.type.toLowerCase() : '';
+    const label = text || '(이름 없음)';
+    let kind = '';
+    if (type === 'submit') kind = '버튼의 타입을 제출할 수 있는 버튼 형식으로 만든 후';
+    else if (type === 'reset') kind = '버튼의 타입을 입력한 내용을 모두 지우는 초기화 버튼 형식으로 만든 후';
+    else if (type === 'button') kind = '버튼의 타입을 누르면 정해진 동작만 하는 일반 버튼 형식으로 만든 후';
+    else kind = '버튼의 타입을 따로 적지 않아 기본값인 제출 버튼 형식으로 만든 후';
+    const easy = `${kind} 그 버튼의 이름을 ${josa(q(label), '으로/로')} 표시하는 명령어입니다.`;
+    const purpose = guessPurpose(text, cls, id);
+    const why =
+      type === 'reset'
+        ? '사용자가 잘못 입력한 내용을 한 번에 지우고 처음부터 다시 쓸 수 있도록 배치한 버튼입니다.'
+        : type === 'button'
+        ? `사용자가 눌렀을 때 ${purpose ? `${purpose} 관련 ` : ''}동작(예: 창 열기, 화면 바꾸기)을 실행하도록 배치한 버튼입니다.`
+        : `사용자가 입력한 ${purpose && purpose !== '로그인' ? `${purpose} ` : ''}양식 정보를 서버로 전송(제출)하기 위해 클릭할 수 있도록 배치한 ${purpose === '로그인' ? '로그인 ' : ''}필수 버튼입니다.`;
+    return { easy, why };
+  }
+
+  // 입력칸
+  if (tagName === 'input') {
+    const type = typeof attrs.type === 'string' ? attrs.type.toLowerCase() : 'text';
+    const kind = INPUT_KIND[type] || `${type} 형식의 입력칸`;
+    const parts: string[] = [`${josa(kind, '을/를')} 만들고`];
+    if (typeof attrs.placeholder === 'string') {
+      parts.push(`칸 안에 ${josa(q(attrs.placeholder), '이라는/라는')} 흐린 안내 문구를 미리 보여주며`);
+    }
+    if (typeof attrs.value === 'string' && type !== 'submit') {
+      parts.push(`처음부터 ${josa(q(attrs.value), '이/가')} 적혀 있게 하고`);
+    }
+    if (attrs.required) parts.push('비워두면 제출되지 않도록 반드시 채워야 하는 칸으로 정하는');
+    let easy = parts.join(', ');
+    easy = easy.replace(/(만들고|보여주며|하고)$/, (m) =>
+      m === '만들고' ? '만드는' : m === '보여주며' ? '보여주는' : '하는'
+    );
+    if (type === 'submit' && typeof attrs.value === 'string') {
+      easy = `누르면 내용을 제출하는 버튼을 만들고 그 버튼의 이름을 ${josa(q(attrs.value), '으로/로')} 표시하는`;
+    }
+    easy += ' 명령어입니다.';
+    const purpose = guessPurpose(
+      typeof attrs.placeholder === 'string' ? attrs.placeholder : '',
+      typeof attrs.name === 'string' ? attrs.name : '',
+      id,
+      type
+    );
+    const target =
+      purpose === '로그인'
+        ? '로그인에 필요한 사용자의 계정 정보'
+        : purpose
+        ? `${purpose === '아이디' || purpose === '비밀번호' ? '로그인에 필요한 ' : ''}사용자의 ${purpose}`
+        : '사용자에게 필요한 정보';
+    const why =
+      type === 'checkbox' || type === 'radio'
+        ? `사용자가 ${purpose ? `${purpose} 관련 ` : ''}항목을 직접 골라 선택할 수 있게 하기 위해 사용되었습니다.`
+        : `${josa(target, '을/를')} 화면에서 직접 입력받기 위해 사용되었습니다.`;
+    return { easy, why };
+  }
+
+  // 문단
+  if (tagName === 'p') {
+    if (!text) return null;
+    return {
+      easy: `${josa(q(text), '이라는/라는')} 문장을 보통 크기 글씨의 한 문단으로 화면에 출력하는 태그입니다.`,
+      why: `제목 아래에서 사용자에게 ${josa(q(text), '이라고/라고')} 다음에 할 일이나 상세한 내용을 안내하기 위해 사용되었습니다.`,
+    };
+  }
+
+  // 탭 제목
+  if (tagName === 'title') {
+    if (!text) return null;
+    return {
+      easy: `브라우저 탭 맨 위에 ${josa(q(text), '이라는/라는')} 페이지 제목을 표시하는 태그입니다.`,
+      why: `사용자가 탭을 여러 개 열어두거나 즐겨찾기에 저장했을 때 이 페이지가 ${josa(q(text), '이라는/라는')} 걸 바로 알아볼 수 있도록 이름표를 붙이기 위해 사용되었습니다.`,
+    };
+  }
+
+  // 묶음 상자
+  if (['div', 'section', 'main', 'article', 'aside', 'header', 'footer', 'nav', 'span'].includes(tagName)) {
+    const boxName: Record<string, string> = {
+      div: '화면의 여러 요소를 하나로 묶는 보이지 않는 상자',
+      span: '글자 일부분만 따로 꾸미기 위해 감싸는 작은 상자',
+      section: '내용을 주제별로 나누는 구역 상자',
+      main: '이 페이지의 가장 중요한 본문 내용을 담는 상자',
+      article: '하나의 글(게시글, 기사)을 통째로 담는 상자',
+      aside: '본문 옆에 붙는 보조 내용을 담는 상자',
+      header: '페이지나 구역의 맨 위 머리 부분을 담는 상자',
+      footer: '페이지나 구역의 맨 아래 꼬리 부분을 담는 상자',
+      nav: '다른 페이지로 이동하는 메뉴 링크들을 담는 상자',
+    };
+    const easy = nameTag
+      ? `${boxName[tagName]}를 만들고, 그 상자에 ${josa(q(nameTag), '이라는/라는')} 이름표를 붙이는 명령어입니다.`
+      : `${boxName[tagName]}를 만드는 명령어입니다.`;
+    const purpose = guessPurpose(nameTag);
+    const why = nameTag
+      ? `이름표(${nameTag})로 보아 ${purpose ? `${purpose} 관련 ` : '같은 역할을 하는 '}제목·입력칸·버튼 같은 요소들을 한 덩어리로 묶어서 함께 꾸미거나 위치를 정하기 위해 사용되었습니다.`
+      : '여러 요소를 한 덩어리로 묶어서 함께 꾸미거나 위치를 정하기 위해 사용되었습니다.';
+    return { easy, why };
+  }
+
+  // 페이지 전체 상자
+  if (tagName === 'html') {
+    const lang = typeof attrs.lang === 'string' ? attrs.lang : '';
+    const langName: Record<string, string> = { ko: '한국어', en: '영어', ja: '일본어', zh: '중국어' };
+    return {
+      easy: lang
+        ? `웹페이지 전체를 감싸는 가장 바깥 상자를 만들고, 이 페이지가 ${langName[lang] || lang}(${lang})로 쓰였다고 브라우저에 알려주는 명령어입니다.`
+        : '웹페이지 전체를 감싸는 가장 바깥 상자를 만드는 명령어입니다.',
+      why: lang
+        ? `페이지의 모든 내용을 하나로 담고, 번역 기능이나 화면 읽어주기 프로그램이 ${langName[lang] || lang}로 올바르게 읽도록 하기 위해 사용되었습니다.`
+        : '페이지의 모든 내용을 하나로 담기 위해 문서 맨 바깥에 사용되었습니다.',
+    };
+  }
+
+  // 메타 정보
+  if (tagName === 'meta') {
+    if (typeof attrs.charset === 'string') {
+      return {
+        easy: `한글 같은 글자가 깨지지 않도록 이 페이지의 글자를 ${attrs.charset} 방식으로 읽으라고 브라우저에 알려주는 명령어입니다.`,
+        why: '이 줄이 없으면 한글이 "ë‚˜ì˜" 같은 이상한 기호로 깨져 보일 수 있어서, 글자가 올바르게 보이도록 하기 위해 사용되었습니다.',
+      };
+    }
+    if (attrs.name === 'viewport') {
+      return {
+        easy: '휴대폰처럼 작은 화면에서도 페이지 폭을 기기 화면 크기에 딱 맞추라고 브라우저에 알려주는 명령어입니다.',
+        why: '휴대폰에서 페이지가 아주 작게 축소되어 보이지 않고, 손가락으로 읽기 편한 크기로 보이게 하기 위해 사용되었습니다.',
+      };
+    }
+    return null;
+  }
+
+  // 이름표 글자
+  if (tagName === 'label') {
+    const target = typeof attrs.for === 'string' ? attrs.for : '';
+    return {
+      easy: target
+        ? `${josa(q(text || '이름'), '이라는/라는')} 안내 글자를 화면에 표시하고, 이 글자를 누르면 ${josa(q(target), '이라는/라는')} 입력칸이 바로 선택되도록 연결하는 태그입니다.`
+        : `${josa(q(text || '이름'), '이라는/라는')} 입력칸 안내 글자를 화면에 표시하는 태그입니다.`,
+      why: `사용자가 옆의 입력칸에 무엇을 적어야 하는지(${text || '항목 이름'}) 알려주기 위해 사용되었습니다.`,
+    };
+  }
+
+  // 신청서(양식)
+  if (tagName === 'form') {
+    const action = typeof attrs.action === 'string' ? attrs.action : '';
+    const method = typeof attrs.method === 'string' ? attrs.method.toUpperCase() : 'GET';
+    const how =
+      method === 'POST' ? '주소창에 내용이 보이지 않게(POST 방식)' : '주소창 뒤에 내용을 붙여서(GET 방식)';
+    const purpose = guessPurpose(action, cls, id);
+    return {
+      easy: action
+        ? `입력칸과 버튼을 하나의 신청서로 묶고, 제출하면 적힌 내용을 ${how} ${josa(q(action), '으로/로')} 보내도록 정하는 명령어입니다.`
+        : '입력칸과 버튼을 하나의 신청서(양식)로 묶는 명령어입니다.',
+      why: `사용자가 입력한 ${purpose ? `${purpose} ` : ''}정보를 한 번에 모아서 서버로 보내기 위해 사용되었습니다.`,
+    };
+  }
+
+  // 링크
+  if (tagName === 'a') {
+    const href = typeof attrs.href === 'string' ? attrs.href : '';
+    const newTab = attrs.target === '_blank';
+    return {
+      easy: `${josa(q(text || '링크'), '이라는/라는')} 글자를 누를 수 있게 만들고, 누르면 ${href ? josa(q(href), '으로/로') : '정해진 주소로'} ${newTab ? '새 탭에서 ' : ''}이동하게 하는 태그입니다.`,
+      why: `사용자가 ${text ? q(text) : '다른 페이지'} 화면으로 쉽게 넘어갈 수 있도록 길을 연결하기 위해 사용되었습니다.`,
+    };
+  }
+
+  // 이미지
+  if (tagName === 'img') {
+    const src = typeof attrs.src === 'string' ? attrs.src : '';
+    const alt = typeof attrs.alt === 'string' ? attrs.alt : '';
+    return {
+      easy: `${src ? josa(q(src), '이라는/라는') + ' 위치에 있는 ' : ''}그림을 화면에 보여주는 명령어입니다.${
+        alt ? ` 그림이 안 보일 때는 대신 ${josa(q(alt), '이라는/라는')} 설명 글자가 나옵니다.` : ''
+      }`,
+      why: alt
+        ? `글자만으로는 전달하기 어려운 ${q(alt)} 모습을 사용자에게 눈으로 보여주기 위해 사용되었습니다.`
+        : '글자만으로는 전달하기 어려운 내용을 그림으로 보여주기 위해 사용되었습니다.',
+    };
+  }
+
+  // 목록
+  if (tagName === 'ul' || tagName === 'ol') {
+    return {
+      easy: tagName === 'ul'
+        ? '앞에 점(•)이 찍히는 순서 없는 목록 상자를 만드는 명령어입니다.'
+        : '앞에 1, 2, 3 번호가 붙는 순서 있는 목록 상자를 만드는 명령어입니다.',
+      why: '여러 항목을 한 줄씩 가지런히 나열해서 보기 쉽게 정리하기 위해 사용되었습니다.',
+    };
+  }
+  if (tagName === 'li') {
+    return {
+      easy: text
+        ? `목록 안에 ${josa(q(text), '이라는/라는')} 항목 한 줄을 추가하는 태그입니다.`
+        : '목록 안에 항목 한 줄을 추가하는 태그입니다.',
+      why: '목록의 각 항목을 하나씩 구분해서 보여주기 위해 사용되었습니다.',
+    };
+  }
+
+  // 강조 글자
+  if (tagName === 'strong' || tagName === 'b') {
+    return {
+      easy: `${josa(q(text || '글자'), '을/를')} 굵은 글씨로 강조해서 출력하는 태그입니다.`,
+      why: '여러 글자 중에서 꼭 봐야 하는 중요한 부분을 눈에 띄게 하기 위해 사용되었습니다.',
+    };
+  }
+
+  // 여러 줄 입력칸
+  if (tagName === 'textarea') {
+    return {
+      easy: `여러 줄의 긴 글을 입력할 수 있는 큰 입력칸을 만드는 명령어입니다.${
+        typeof attrs.placeholder === 'string' ? ` 칸 안에는 ${josa(q(attrs.placeholder), '이라는/라는')} 안내 문구가 흐리게 보입니다.` : ''
+      }`,
+      why: '한 줄로는 부족한 긴 내용(의견, 문의 등)을 사용자에게 입력받기 위해 사용되었습니다.',
+    };
+  }
+
+  // 외부 파일 연결
+  if (tagName === 'link' && typeof attrs.href === 'string') {
+    return {
+      easy: `${josa(q(attrs.href), '이라는/라는')} 다른 파일을 이 페이지에 불러와 연결하는 명령어입니다.`,
+      why: attrs.rel === 'stylesheet'
+        ? '화면의 색깔, 글씨 크기, 배치 같은 꾸밈 규칙을 따로 만든 파일에서 가져오기 위해 사용되었습니다.'
+        : '페이지에 필요한 추가 파일을 불러오기 위해 사용되었습니다.',
+    };
+  }
+  if (tagName === 'script') {
+    const src = typeof attrs.src === 'string' ? attrs.src : '';
+    return {
+      easy: src
+        ? `${josa(q(src), '이라는/라는')} 자바스크립트 파일을 불러와 실행하는 명령어입니다.`
+        : '이 안에 적힌 자바스크립트 명령을 실행하는 구역을 만드는 명령어입니다.',
+      why: '버튼을 눌렀을 때 반응하는 것처럼 화면이 움직이고 동작하게 만들기 위해 사용되었습니다.',
+    };
+  }
+
+  return null;
+}
+
+// 오류가 있는 줄: 모든 레벨의 설명에 오류 내용과 고친 코드를 반영
+export function applySyntaxError(item: LineInterpretation, err: SyntaxCheckError): LineInterpretation {
+  return {
+    ...item,
+    hasError: true,
+    errorDetail: err.detail,
+    subCommentBeginner: `[오류] ${err.detail}`,
+    subCommentIntermediate: `[오류] ${err.detail}`,
+    subCommentAdvanced: `[SYNTAX ERROR] ${err.detail}`,
+    beginner: {
+      ...item.beginner,
+      betterExample: err.fixed
+        ? { code: err.fixed, reason: '틀린 부분을 바로잡은 올바른 코드입니다. 이렇게 고치면 브라우저가 의도한 대로 화면을 그립니다.' }
+        : item.beginner.betterExample,
+    },
+    intermediate: {
+      ...item.intermediate,
+      isBasic: false,
+      codeCheckVerdict: `❌ 오류가 있습니다. ${err.detail}`,
+      betterRefactor: err.fixed ? { code: err.fixed, reason: '문법 오류를 수정한 코드입니다.' } : item.intermediate.betterRefactor,
+    },
+    advanced: {
+      ...item.advanced,
+      bugAudit: { hasIssue: true, severity: 'error', issueTitle: '문법 오류 (Syntax Error)', issueDetail: err.detail },
+      // 고친 코드를 알 수 없으면, 엉뚱한 예시 대신 패치를 비워 둠
+      recommendedPatch: err.fixed,
+    },
+  };
+}
+
+// 이전 버전과의 호환용 (한 줄만 검사)
+export function detectLineSyntaxError(line: string): { hasError: boolean; errorDetail?: string } {
+  const err = checkLine(line);
+  return err ? { hasError: true, errorDetail: err.detail } : { hasError: false };
+}
+
+
+
+// CSS 줄: 중급자(작동 원리)·전공자(기술 분석/누락 점검)까지 CSS 기준으로 채우기
+function cssPatch(decls: CssDecl[]): { code: string; reason: string; missing: string[] } | null {
+  const missing: string[] = [];
+  const out: string[] = [];
+  let changed = false;
+  for (const d of decls) {
+    if (d.prop === 'width' && /px$/.test(d.value) && !decls.some((x) => x.prop === 'max-width')) {
+      out.push('width: 100%', `max-width: ${d.value}`);
+      missing.push(`고정 폭 ${d.value}는 화면이 좁은 휴대폰에서 가로 스크롤을 만듭니다 → width: 100%; max-width: ${d.value};`);
+      changed = true;
+    } else if (d.prop === 'height' && /px$/.test(d.value)) {
+      out.push(`min-height: ${d.value}`);
+      missing.push(`고정 높이 ${d.value}는 내용이 많아지면 넘칩니다 → min-height: ${d.value};`);
+      changed = true;
+    } else {
+      out.push(`${d.prop}: ${d.value}`);
+    }
+  }
+  if (!changed) return null;
+  return { code: out.join('; ') + ';', reason: missing.join(' / '), missing };
+}
+
+function applyCssLevels(
+  base: BaseLineInterpretation,
+  css: CssLineResult,
+  fallbackDepth: { isBasic: boolean; howItWorks: string; technicalDetail: string }
+): LineInterpretation {
+  const depth = css ? cssLevelDepth(css) : fallbackDepth;
+  const patch = cssPatch(css.decls);
+  const n = css.decls.length;
+  return {
+    ...base,
+    subCommentIntermediate: depth.isBasic
+      ? '기본 코드 (작동 원리 설명 생략)'
+      : n
+      ? `CSS 선언 ${n}개 적용 (${css.decls.map((d) => d.prop).join(', ')})`
+      : `'${css.selector}' 규칙 시작 (명시도 점검)`,
+    subCommentAdvanced: patch
+      ? `[RESPONSIVE] ${css.decls.filter((d) => /^(width|height)$/.test(d.prop)).map((d) => `${d.prop}:${d.value}`).join(', ')} 고정 크기 점검 필요`
+      : `[CSS] ${n ? `${n} declarations` : 'rule block'} — cascade/specificity 정상`,
+    intermediate: {
+      isBasic: depth.isBasic,
+      howItWorks: depth.howItWorks,
+      codeCheckVerdict: n
+        ? `CSS 선언 ${n}개가 모두 '속성: 값;' 문법에 맞게 작성되었습니다.${n > 1 ? ' 다만 한 줄에 여러 개를 이어 쓰면 읽고 고치기 어려우므로 한 줄에 하나씩 쓰는 것이 좋습니다.' : ''}`
+        : '선택자와 중괄호 문법이 올바릅니다.',
+      betterRefactor: patch
+        ? { code: patch.code.split('; ').join(';\n'), reason: '고정 크기 대신 반응형 크기를 쓰면 휴대폰처럼 좁은 화면에서도 레이아웃이 깨지지 않습니다.' }
+        : n > 1
+        ? { code: css.decls.map((d) => `${d.prop}: ${d.value};`).join('\n'), reason: '한 줄에 선언 하나씩 쓰면 어떤 값을 바꿨는지 찾기 쉽고, 버전 관리(git)에서 변경 내역도 명확해집니다.' }
+        : base.intermediate.betterRefactor,
+      suggestedAdditions: base.intermediate.suggestedAdditions,
+    },
+    advanced: {
+      ...base.advanced,
+      technicalDetail: depth.technicalDetail,
+      missingAudit: patch
+        ? { hasMissing: true, missingTitle: '반응형 크기 처리 누락', missingSnippet: patch.code, reason: patch.reason }
+        : base.advanced.missingAudit,
+      bugAudit: patch
+        ? { hasIssue: true, severity: 'warning', issueTitle: '고정 크기 레이아웃', issueDetail: patch.missing.join(' ') }
+        : base.advanced.bugAudit,
+      recommendedPatch: patch ? patch.code : base.advanced.recommendedPatch,
+    },
+  };
+}
+
+function htmlDefinition(trimmed: string): string | undefined {
+  if (trimmed.startsWith('<!--')) return 'HTML 주석(<!-- -->)은 화면에 보이지 않고 개발자끼리만 보는 설명 메모입니다.';
+  const close = trimmed.match(/^<\/([a-zA-Z][\w-]*)>$/);
+  if (close) return `</${close[1]}>는 앞에서 연 <${close[1]}> 태그가 여기서 끝난다는 것을 알려주는 닫는 태그입니다.`;
+  if (/^<[A-Z]/.test(trimmed)) return '대문자로 시작하는 태그는 리액트에서 직접 만든 화면 부품(컴포넌트)을 불러와 쓰는 코드입니다.';
+  const tag = trimmed.match(/^<([!a-zA-Z][\w-]*)/)?.[1]?.toLowerCase() || '';
+  return TAG_DEFINITIONS[tag];
+}
+
+// 레벨별 깊이 정보(중급 작동 원리 / 전공자 기술 분석)를 붙이기 전의 기본 해석 결과
+type BaseLineInterpretation = Omit<LineInterpretation, 'intermediate' | 'advanced'> & {
+  intermediate: Omit<LineInterpretation['intermediate'], 'howItWorks' | 'isBasic'>;
+  advanced: Omit<LineInterpretation['advanced'], 'technicalDetail'>;
+};
 
 export function interpretSingleLineFallback(
   line: string,
   lineNumber: number
 ): LineInterpretation {
+  const base = interpretSingleLineBase(line, lineNumber);
+  const depth = getLevelDepth(line);
+  const trimmedLine = line.trim();
+  const beginnerCode = trimmedLine.startsWith('<') ? null : describeCodeForBeginner(line);
+  if (beginnerCode) {
+    base.shortRole = beginnerCode.role;
+    base.subCommentBeginner = beginnerCode.easy;
+    base.beginner = {
+      ...base.beginner,
+      definition: beginnerCode.definition,
+      easyExplanation: beginnerCode.easy,
+      whyUsedHere: beginnerCode.why,
+      tokens: beginnerCode.tokens ?? base.beginner.tokens,
+    };
+  } else if (trimmedLine.startsWith('<')) {
+    base.beginner = { ...base.beginner, definition: htmlDefinition(trimmedLine) };
+  }
+  const css = trimmedLine.startsWith('<') ? null : describeCssLine(line);
+  if (css) return applyCssLevels(base, css, depth);
+  return {
+    ...base,
+    subCommentIntermediate: depth.isBasic
+      ? '기본 코드 (작동 원리 설명 생략)'
+      : base.subCommentIntermediate,
+    intermediate: {
+      ...base.intermediate,
+      isBasic: depth.isBasic,
+      howItWorks: depth.howItWorks,
+    },
+    advanced: {
+      ...base.advanced,
+      technicalDetail: depth.technicalDetail,
+    },
+  };
+}
+
+function interpretSingleLineBase(
+  line: string,
+  lineNumber: number
+): BaseLineInterpretation {
   const trimmed = line.trim();
   const errorCheck = detectLineSyntaxError(line);
 
@@ -734,25 +1403,17 @@ export function interpretSingleLineFallback(
       ? info.whyUsedHere
       : '웹페이지의 화면 구조와 콘텐츠를 브라우저에 정확하게 표시하기 위해 작성했습니다.';
 
-    if (tagName === 'h1') {
-      easyExplanation = innerText
-        ? `제일 큰 글씨로 ${innerText}를 출력하는 태그입니다.`
-        : '제일 큰 글씨로 제목을 출력하는 태그입니다.';
-      whyUsedHere = '이 화면에서 가장 큰 첫번째 제목 글자를 표시하는 태그입니다.';
-    } else if (tagName === 'button') {
-      const isSubmit =
-        trimmed.includes('type="submit"') ||
-        trimmed.includes("type='submit'") ||
-        (!trimmed.includes('type="button"') && !trimmed.includes('type="reset"'));
-      const btnLabel = innerText || '로그인';
-      easyExplanation = isSubmit
-        ? `버튼의 타입을 제출할 수 있는 버튼 형식으로 만든 후 그 버튼의 이름을 ${btnLabel}으로 표시하는 명령어입니다.`
-        : `클릭 동작을 수행하는 버튼 형식으로 만든 후 그 버튼의 이름을 ${btnLabel}으로 표시하는 명령어입니다.`;
-      whyUsedHere =
-        '사용자가 입력한 양식 정보를 서버로 전송(제출)하기 위해 클릭할 수 있도록 배치한 필수 입력 버튼입니다.';
-    } else if (tagName === 'p' && innerText) {
-      easyExplanation = `일반적인 본문 설명 글자로 "${innerText}"를 화면에 깔끔하게 출력하는 문단 태그입니다.`;
-      whyUsedHere = `사용자에게 "${innerText}"라는 상세한 안내 설명 문구를 전달하여 화면 목적을 안내하기 위해 사용되었습니다.`;
+    // 대문자로 시작하면 HTML 태그가 아니라 리액트 컴포넌트(<Header /> ≠ <header>)
+    const beginnerDetail = /^<[A-Z]/.test(trimmed) ? null : describeHtmlForBeginner(trimmed, tagName);
+    if (beginnerDetail) {
+      easyExplanation = beginnerDetail.easy;
+      whyUsedHere = beginnerDetail.why;
+    } else if (!info || /^<[A-Z]/.test(trimmed)) {
+      const byDef = describeHtmlByDefinition(trimmed, tagName);
+      if (byDef) {
+        easyExplanation = byDef.easy;
+        whyUsedHere = byDef.why;
+      }
     }
 
     return {
@@ -1022,6 +1683,71 @@ export function interpretSingleLineFallback(
   };
 }
 
+
+// 닫는 괄호/닫는 태그로 시작하는 줄마다, 그 짝이 열린 줄을 찾아둠
+type OpenerContext =
+  | { kind: 'brace'; opener: string }
+  | { kind: 'tag'; opener: string; tag: string; label: string };
+
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr', '!doctype']);
+
+function findOpenerLines(rawLines: string[]): { openers: (OpenerContext | undefined)[]; stacks: string[][] } {
+  const result: (OpenerContext | undefined)[] = [];
+  const stacks: string[][] = [];
+  const braceStack: { ch: string; line: string }[] = [];
+  const tagStack: { tag: string; line: string; label: string }[] = [];
+
+  rawLines.forEach((line) => {
+    const trimmed = line.trim();
+    let ctx: OpenerContext | undefined;
+
+    if (trimmed.startsWith('<')) {
+      const tagRe = /<(\/?)([!a-zA-Z][\w-]*)([^>]*?)(\/?)>/g;
+      let m: RegExpExecArray | null;
+      let first = true;
+      while ((m = tagRe.exec(trimmed)) !== null) {
+        const [, closing, rawTag, attrs, selfClose] = m;
+        const tag = rawTag.toLowerCase();
+        if (closing) {
+          let idx = -1;
+          for (let i = tagStack.length - 1; i >= 0; i--) {
+            if (tagStack[i].tag === tag) { idx = i; break; }
+          }
+          if (idx >= 0) {
+            const open = tagStack[idx];
+            tagStack.splice(idx);
+            if (first && /^<\/[\w-]+>$/.test(trimmed)) {
+              ctx = { kind: 'tag', opener: open.line, tag, label: open.label };
+            }
+          }
+        } else if (!selfClose && !VOID_TAGS.has(tag)) {
+          const cls = attrs.match(/(?:class|className|id)\s*=\s*["']([^"']+)["']/);
+          tagStack.push({ tag, line: trimmed, label: cls ? cls[1] : '' });
+        }
+        first = false;
+      }
+    } else {
+      stacks[result.length] = braceStack.filter((b) => b.ch === '{').map((b) => b.line);
+      let quote: string | null = null;
+      let firstPop = true;
+      const code = trimmed.replace(/\/\/.*$/, '');
+      for (const ch of code) {
+        if (quote) { if (ch === quote) quote = null; continue; }
+        if (ch === '"' || ch === "'" || ch === '`') { quote = ch; continue; }
+        if ('{(['.includes(ch)) braceStack.push({ ch, line: trimmed });
+        else if ('})]'.includes(ch)) {
+          const open = braceStack.pop();
+          if (firstPop && open && /^[\]})]/.test(trimmed)) ctx = { kind: 'brace', opener: open.line };
+          firstPop = false;
+        }
+      }
+      if (!ctx && /^[\]})]/.test(trimmed)) ctx = { kind: 'brace', opener: '' };
+    }
+    result.push(ctx);
+  });
+  return { openers: result, stacks };
+}
+
 export function buildFallbackAnalysis(rawCode: string): SimpleCodeAnalysis {
   const cleanCode = rawCode.replace(/\r\n/g, '\n');
   const rawLines = cleanCode.split('\n');
@@ -1029,14 +1755,56 @@ export function buildFallbackAnalysis(rawCode: string): SimpleCodeAnalysis {
     /<!doctype html>|<html|<head|<body|<div|<h1|<p|<form|<input|<button/i.test(
       cleanCode
     );
-  const language = isHtml ? 'HTML' : 'JavaScript';
+  const isCss = !isHtml && looksLikeCss(cleanCode);
+  const language = isHtml ? 'HTML' : isCss ? 'CSS' : 'JavaScript';
+
+  const { openers, stacks } = findOpenerLines(rawLines);
+  const docErrors = checkDocument(rawLines, language);
+  const declared = collectDeclared(cleanCode);
+
+  // 자바스크립트 오타 검사를 할 줄인지: JS 파일 전체 / HTML 안의 <script> 구역 (CSS·HTML 본문 글자는 제외)
+  let inScript = false;
+  const jsLine = rawLines.map((line) => {
+    const t = line.trim();
+    let on: boolean;
+    if (language === 'JavaScript') on = true;
+    else if (language === 'CSS') on = false;
+    else on = inScript && !t.startsWith('<');
+    if (/<script\b[^>]*>/i.test(t) && !/<\/script>/i.test(t.slice(t.search(/<script\b/i)))) inScript = !/\ssrc=/i.test(t);
+    if (/<\/script>/i.test(t)) inScript = false;
+    return on;
+  });
 
   const lines = rawLines.map((line, index) => {
     const item = interpretSingleLineFallback(line, index + 1);
-    const errorCheck = detectLineSyntaxError(line);
-    item.hasError = errorCheck.hasError;
-    item.errorDetail = errorCheck.errorDetail;
-    return item;
+
+    const ctx = openers[index];
+    const cssCtx = !line.trim().startsWith('<') ? describeCssLine(line, stacks[index] || []) : null;
+    if (cssCtx) {
+      const redone = applyCssLevels(item, cssCtx, getLevelDepth(line));
+      Object.assign(item, redone);
+      item.shortRole = cssCtx.role;
+      item.subCommentBeginner = cssCtx.easy;
+      item.beginner = { ...item.beginner, definition: cssCtx.definition, easyExplanation: cssCtx.easy, whyUsedHere: cssCtx.why, tokens: cssCtx.tokens };
+    } else if (!line.trim().startsWith('<') && (ctx?.kind === 'brace' || (stacks[index] && stacks[index].length > 0))) {
+      const d = describeCodeForBeginner(line, ctx?.kind === 'brace' ? ctx.opener : undefined, stacks[index] || []);
+      if (d) {
+        item.shortRole = d.role;
+        item.subCommentBeginner = d.easy;
+        item.beginner = { ...item.beginner, definition: d.definition, easyExplanation: d.easy, whyUsedHere: d.why };
+      }
+    } else if (ctx?.kind === 'tag') {
+      const label = ctx.label ? `${ctx.label} 상자` : `<${ctx.tag}> 구역`;
+      const easy = `위에서 열었던 ${josa(label, '을/를')} 여기서 닫는 태그입니다. 여는 줄(${ctx.opener.trim()})부터 이 줄 사이에 있는 내용이 모두 그 안에 들어갑니다.`;
+      item.subCommentBeginner = `위에서 열었던 ${josa(label, '을/를')} 여기서 닫습니다.`;
+      item.beginner = {
+        ...item.beginner,
+        easyExplanation: easy,
+        whyUsedHere: `${josa(label, '이/가')} 어디서 끝나는지 알려줘야, 그 다음에 오는 내용이 상자 밖에 올바르게 놓이고 화면이 깨지지 않기 때문에 사용되었습니다.`,
+      };
+    }
+    const err = checkLine(line, { js: jsLine[index], declared }) || docErrors.get(index);
+    return err ? applySyntaxError(item, err) : { ...item, hasError: false, errorDetail: undefined };
   });
 
   const commentedLinesBeginner: string[] = [];
@@ -1058,6 +1826,8 @@ export function buildFallbackAnalysis(rawCode: string): SimpleCodeAnalysis {
     commentedLinesBeginner.push(
       language === 'HTML' && item.code.trim().startsWith('<')
         ? `${indent}<!-- ${item.subCommentBeginner} -->`
+        : isCss
+        ? `${indent}/* ${item.subCommentBeginner} */`
         : `${indent}// ${item.subCommentBeginner}`
     );
 
@@ -1066,6 +1836,8 @@ export function buildFallbackAnalysis(rawCode: string): SimpleCodeAnalysis {
     commentedLinesIntermediate.push(
       language === 'HTML' && item.code.trim().startsWith('<')
         ? `${indent}<!-- [CHECK] ${item.subCommentIntermediate} -->`
+        : isCss
+        ? `${indent}/* [CHECK] ${item.subCommentIntermediate} */`
         : `${indent}// [CHECK] ${item.subCommentIntermediate}`
     );
 
@@ -1074,12 +1846,14 @@ export function buildFallbackAnalysis(rawCode: string): SimpleCodeAnalysis {
     commentedLinesAdvanced.push(
       language === 'HTML' && item.code.trim().startsWith('<')
         ? `${indent}<!-- ${item.subCommentAdvanced} -->`
+        : isCss
+        ? `${indent}/* ${item.subCommentAdvanced} */`
         : `${indent}// ${item.subCommentAdvanced}`
     );
   }
 
   return {
-    title: isHtml ? 'HTML 웹페이지 구조 레벨별 맞춤 해석' : '코드 레벨별 맞춤 해석',
+    title: isHtml ? 'HTML 웹페이지 구조 레벨별 맞춤 해석' : isCss ? 'CSS 디자인 규칙 레벨별 맞춤 해석' : '코드 레벨별 맞춤 해석',
     language,
     summary:
       '초급자(친절한 해설 & 왜 쓰였는지), 중급자(코드 오류 검증 & 추가하면 좋은 코드), 전공자(버그/취약점 & 누락된 코드 진단) 수준에 맞춰 완벽하게 차별화된 해석을 제공합니다.',

@@ -74,6 +74,15 @@ export function useSearchQuery(initialQuery = '') {
   return { query, setQuery, results };
 }`;
 
+const CSS_SAMPLE = `#header {
+  width:800px; margin: 0 auto; background:#accbe5; height: 150px; }
+.menu li { display: inline-block; padding: 10px 20px; }
+.menu a {
+  color: #333;
+  font-weight: bold;
+  text-decoration: none;
+}`;
+
 export const SAMPLE_PRESETS: PresetItem[] = [
   {
     id: 'html-basic',
@@ -124,5 +133,15 @@ export const SAMPLE_PRESETS: PresetItem[] = [
     flowType: 'Interaction',
     description: '300ms 디바운싱을 통해 API 과호출을 방지하는 실시간 검색 커스텀 훅',
     data: buildFallbackAnalysis(REACT_HOOK_SAMPLE),
+  },
+  {
+    id: 'css-header',
+    label: '헤더 영역 꾸미기 (CSS)',
+    appName: 'Basic Web Page',
+    category: 'Utility',
+    platform: 'Web',
+    flowType: 'Interaction',
+    description: '가운데 정렬된 헤더와 메뉴를 꾸미는 CSS 규칙',
+    data: buildFallbackAnalysis(CSS_SAMPLE),
   },
 ];

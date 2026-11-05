@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Code2,
   Copy,
@@ -7,8 +7,6 @@ import {
   BookOpen,
   XCircle,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
   Loader2,
   HelpCircle,
   ShieldAlert,
@@ -17,17 +15,52 @@ import {
   Wrench,
   SearchCheck,
   Zap,
-  Search,
-  Layers,
-  SlidersHorizontal,
-  Compass,
-  ArrowUpRight,
   ArrowLeft,
-  ExternalLink,
+  Pencil,
+  Sprout,
+  Rocket,
+  Cpu,
+  ChevronLeft,
+  ChevronRight,
+  Settings2,
+  Microscope,
+  MinusCircle,
+  FilePlus,
+  Lightbulb,
+  ChevronDown,
+  Upload,
+  FileCode2,
 } from 'lucide-react';
 import { SimpleCodeAnalysis, LineInterpretation, UserLevel } from './types.ts';
 import { SAMPLE_PRESETS, PresetItem } from './data/presets.ts';
+
+// 끌어다 놓은 파일 하나의 상태
+interface OpenFile {
+  id: string;
+  name: string;
+  code: string;
+  analysis: SimpleCodeAnalysis;
+  selectedLine: number;
+  isEditing: boolean;
+}
+const MAIN_KEY = '__main__'; // 파일이 아닌 직접 입력/예시 코드
+
+const SECONDARY_BTN =
+  'py-3 text-sm font-semibold text-[#D5D8E5] bg-[#2A2D40] hover:bg-[#33374D] border border-[#34384F] rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap';
+const PRIMARY_BTN =
+  'py-3 text-sm font-bold text-white bg-[#7C6CF6] hover:bg-[#6B5AE8] disabled:opacity-40 disabled:cursor-not-allowed rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap';
 import { buildFallbackAnalysis } from './utils/codeAnalyzer.ts';
+
+const LEVELS: {
+  id: UserLevel;
+  label: string;
+  desc: string;
+  Icon: typeof Sprout;
+}[] = [
+  { id: 'beginner', label: '초급자', desc: '정의를 쉬운 말로', Icon: Sprout },
+  { id: 'intermediate', label: '중급자', desc: '작동 원리 중심', Icon: Rocket },
+  { id: 'advanced', label: '전공자', desc: '기술 분석 · 결함 진단', Icon: Cpu },
+];
 
 export default function App() {
   const [level, setLevel] = useState<UserLevel>('beginner');
@@ -38,22 +71,117 @@ export default function App() {
     SAMPLE_PRESETS[0].data
   );
   const [selectedLineNum, setSelectedLineNum] = useState<number>(1);
-  const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
   const [isEditing, setIsEditing] = useState<boolean>(false); // 코드 변경/편집 모드 여부
-  const [copiedCommented, setCopiedCommented] = useState<boolean>(false);
+
+  // ---------- 여러 파일 ----------
+  // 끌어다 놓은 파일마다 코드·해석·선택한 줄·편집 상태를 따로 보관하고, 점(●)으로 오갈 수 있게 함
+  const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
+  const [activeFileId, setActiveFileIdState] = useState<string | null>(null);
+  const activeFileIdRef = useRef<string | null>(null);
+  const setActiveFileId = (id: string | null) => {
+    activeFileIdRef.current = id;
+    setActiveFileIdState(id);
+  };
+  const [pendingIds, setPendingIds] = useState<string[]>([]); // AI 해석을 기다리는 파일들
+  const requestSeq = useRef<Record<string, number>>({});
+  const activeKey = activeFileId ?? MAIN_KEY;
+  const isAiLoading = pendingIds.includes(activeKey);
+  const activeIndex = openFiles.findIndex((f) => f.id === activeFileId);
+  const loadedFileName = activeIndex >= 0 ? openFiles[activeIndex].name : null;
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
+  const [showExamples, setShowExamples] = useState<boolean>(false); // 예시 코드 메뉴 열림 여부
+  const [isDragging, setIsDragging] = useState<boolean>(false); // 파일을 끌어오는 중인지
+  const [dropMessage, setDropMessage] = useState<string | null>(null); // 파일 불러오기 안내/오류
+  const dragDepth = useRef(0);
+
+  const errorLines = analysis.lines.filter((l) => l.hasError).map((l) => l.lineNumber);
 
   const selectedLine: LineInterpretation =
     analysis.lines.find((l) => l.lineNumber === selectedLineNum) ||
     analysis.lines[0];
 
+  // 코드 입력 카드 밖에 파일을 떨어뜨려도 브라우저가 파일을 열어버리지 않도록 막기
+  useEffect(() => {
+    const block = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
+    };
+    window.addEventListener('dragover', block);
+    window.addEventListener('drop', block);
+    return () => {
+      window.removeEventListener('dragover', block);
+      window.removeEventListener('drop', block);
+    };
+  }, []);
+
+  // 안내 메시지는 4초 뒤 자동으로 사라짐
+  useEffect(() => {
+    if (!dropMessage) return;
+    const id = window.setTimeout(() => setDropMessage(null), 4000);
+    return () => window.clearTimeout(id);
+  }, [dropMessage]);
+
+  // 방향키(↑ ↓)로 줄 이동
+  useEffect(() => {
+    if (isEditing) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedLineNum((n) => Math.min(analysis.lines.length, n + 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedLineNum((n) => Math.max(1, n - 1));
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        // 여러 파일을 열었을 때 ← → 로 파일 넘기기
+        switchByOffsetRef.current(e.key === 'ArrowLeft' ? -1 : 1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isEditing, analysis.lines.length]);
+
+  // 선택된 줄이 코드 목록에서 보이도록 스크롤
+  useEffect(() => {
+    document
+      .getElementById(`code-line-${selectedLineNum}`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [selectedLineNum]);
+
   // 다른 새 코드를 검사하기 위해 기존 코드를 모두 삭제하고 새 입력 상태로 초기화
   const handleResetNewCode = () => {
+    setOpenFiles([]);
+    setActiveFileId(null);
     setInputCode('');
     setIsEditing(true);
     const emptyAnalysis = buildFallbackAnalysis('');
     setAnalysis(emptyAnalysis);
     setSelectedLineNum(1);
+  };
+
+  const firstLineOf = (a: SimpleCodeAnalysis) => a.lines.find((l) => !l.isBlank)?.lineNumber || 1;
+
+  // 백엔드 Gemini AI 해석 보강 (파일마다 따로). 그사이 다른 파일로 넘어가도 결과가 엉뚱한 파일에 들어가지 않음
+  const requestAi = async (key: string, code: string) => {
+    const seq = (requestSeq.current[key] = (requestSeq.current[key] || 0) + 1);
+    setPendingIds((p) => (p.includes(key) ? p : [...p, key]));
+    try {
+      const res = await fetch('/api/analyze-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      if (!res.ok) return;
+      const aiData = (await res.json()) as SimpleCodeAnalysis;
+      if (!aiData || !Array.isArray(aiData.lines) || aiData.lines.length === 0) return;
+      if (requestSeq.current[key] !== seq) return; // 그사이 코드가 다시 분석됨 → 옛 결과 버림
+      if ((activeFileIdRef.current ?? MAIN_KEY) === key) setAnalysis(aiData);
+      if (key !== MAIN_KEY) setOpenFiles((fs) => fs.map((f) => (f.id === key ? { ...f, analysis: aiData } : f)));
+    } catch {
+      // 로컬 해석 결과 유지
+    } finally {
+      if (requestSeq.current[key] === seq) setPendingIds((p) => p.filter((k) => k !== key));
+    }
   };
 
   const handleRunAnalysis = async (customCodeToRun?: string) => {
@@ -63,44 +191,46 @@ export default function App() {
     // 1. 즉시 로컬 정밀 분석 결과 반영 (0초 지연)
     const instant = buildFallbackAnalysis(codeToAnalyze);
     setAnalysis(instant);
-    const firstValidLine =
-      instant.lines.find((l) => !l.isBlank)?.lineNumber || 1;
-    setSelectedLineNum(firstValidLine);
+    setSelectedLineNum(firstLineOf(instant));
     setIsEditing(false); // 분석 완료 후 검사 모드로 전환
 
+    const key = activeFileIdRef.current ?? MAIN_KEY;
+    if (key !== MAIN_KEY) {
+      setOpenFiles((fs) =>
+        fs.map((f) =>
+          f.id === key ? { ...f, code: codeToAnalyze, analysis: instant, selectedLine: firstLineOf(instant), isEditing: false } : f
+        )
+      );
+    }
+
     // 2. 백엔드 Gemini AI 분석 보강
-    setIsAiLoading(true);
-    try {
-      const res = await fetch('/api/analyze-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: codeToAnalyze }),
-      });
-      if (res.ok) {
-        const aiData = (await res.json()) as SimpleCodeAnalysis;
-        if (aiData && Array.isArray(aiData.lines) && aiData.lines.length > 0) {
-          setAnalysis(aiData);
-        }
-      }
-    } catch {
-      // 로컬 마스터 분석 데이터 유지
-    } finally {
-      setIsAiLoading(false);
-    }
+    await requestAi(key, codeToAnalyze);
   };
 
-  const handleCopyCommentedCode = () => {
-    let textToCopy = analysis.commentedCodeBeginner;
-    if (level === 'intermediate') {
-      textToCopy = analysis.commentedCodeIntermediate;
-    } else if (level === 'advanced') {
-      textToCopy = analysis.commentedCodeAdvanced;
-    }
-
-    navigator.clipboard.writeText(textToCopy);
-    setCopiedCommented(true);
-    window.setTimeout(() => setCopiedCommented(false), 2000);
+  // 다른 파일로 넘어가기: 지금 파일의 상태를 저장하고, 고른 파일의 상태를 불러옴
+  const switchFile = (targetId: string) => {
+    const currentId = activeFileIdRef.current;
+    if (targetId === currentId) return;
+    const target = openFiles.find((f) => f.id === targetId);
+    if (!target) return;
+    setOpenFiles((fs) =>
+      fs.map((f) => (f.id === currentId ? { ...f, code: inputCode, analysis, selectedLine: selectedLineNum, isEditing } : f))
+    );
+    setActiveFileId(targetId);
+    setInputCode(target.code);
+    setAnalysis(target.analysis);
+    setSelectedLineNum(target.selectedLine);
+    setIsEditing(target.isEditing);
+    setShowExamples(false);
   };
+  const switchByOffset = (offset: number) => {
+    if (openFiles.length < 2) return;
+    const i = activeIndex < 0 ? 0 : activeIndex;
+    const next = Math.min(openFiles.length - 1, Math.max(0, i + offset));
+    if (next !== i) switchFile(openFiles[next].id);
+  };
+  const switchByOffsetRef = useRef(switchByOffset);
+  switchByOffsetRef.current = switchByOffset;
 
   const handleCopyCodeSnippet = (snippet: string, key: string) => {
     navigator.clipboard.writeText(snippet);
@@ -115,685 +245,874 @@ export default function App() {
     return line.subCommentAdvanced;
   };
 
-  return (
-    <div className="min-h-screen bg-[#FBFBFB] text-[#121212] flex flex-col font-sans selection:bg-[#121212] selection:text-white">
-      {/* 1. 상단 메뉴바: 사용자 요청대로 불필요한 요소는 모두 지우고 [초보자 / 중급자 / 전공자] 버튼만 큼직하게 유지 */}
-      <header className="bg-[#FFFFFF]/95 backdrop-blur-md border-b border-[#E6E6E6] sticky top-0 z-30 w-full transition-all">
-        <div className="w-full px-6 sm:px-10 lg:px-14 py-3.5 flex items-center justify-between gap-6">
-          {/* 브랜드 로고 */}
-          <a
-            href="#top"
-            className="group flex items-baseline gap-2.5 text-[#121212] tracking-tighter shrink-0"
+  const CopyButton = ({ code, id, label = '복사' }: { code: string; id: string; label?: string }) => (
+    <button
+      type="button"
+      onClick={() => handleCopyCodeSnippet(code, id)}
+      className="text-[11px] font-semibold text-[#A99CFF] hover:text-white flex items-center gap-1 cursor-pointer bg-[#7C6CF6]/10 hover:bg-[#7C6CF6]/25 px-2.5 py-1 rounded-full border border-[#7C6CF6]/30 transition-colors"
+    >
+      {copiedSnippet === id ? (
+        <>
+          <Check className="w-3 h-3 text-emerald-400" />
+          <span>복사됨</span>
+        </>
+      ) : (
+        <>
+          <Copy className="w-3 h-3" />
+          <span>{label}</span>
+        </>
+      )}
+    </button>
+  );
+
+  // ---------- 파일 끌어다 놓기 ----------
+  const CODE_EXTENSIONS = new Set([
+    'html', 'htm', 'css', 'scss', 'sass', 'less', 'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'json', 'vue', 'svelte',
+    'py', 'java', 'kt', 'c', 'h', 'cpp', 'hpp', 'cs', 'go', 'rs', 'php', 'rb', 'swift', 'dart', 'sql', 'sh', 'bat',
+    'xml', 'svg', 'yml', 'yaml', 'md', 'txt', 'ini', 'env',
+  ]);
+  const MAX_FILE_BYTES = 1024 * 1024; // 1MB
+
+  const MAX_FILES = 20;
+
+  // 파일 하나 읽기: 코드 파일이 아니거나 너무 크면 이유를 돌려줌
+  const readCodeFile = async (file: File): Promise<{ text: string } | { problem: string }> => {
+    const ext = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : '';
+    const looksText = file.type.startsWith('text/') || /json|javascript|xml|svg/.test(file.type) || CODE_EXTENSIONS.has(ext);
+    if (!looksText) return { problem: '코드 파일이 아님' };
+    if (file.size > MAX_FILE_BYTES) return { problem: `${(file.size / 1024 / 1024).toFixed(1)}MB로 너무 큼` };
+    const text = (await file.text()).replace(/^\uFEFF/, ''); // 파일 맨 앞의 BOM 문자 제거
+    if (text.includes('\u0000')) return { problem: '글자로 된 코드가 아님' };
+    if (!text.trim()) return { problem: '빈 파일' };
+    return { text: text.replace(/\r\n/g, '\n') };
+  };
+
+  const handleFileDrop = async (fileList: FileList | null) => {
+    const all = Array.from(fileList ?? []);
+    if (!all.length) return;
+    const picked = all.slice(0, MAX_FILES);
+    const loaded: OpenFile[] = [];
+    const skipped: string[] = [];
+    for (const [i, file] of picked.entries()) {
+      const r = await readCodeFile(file);
+      if ('problem' in r) {
+        skipped.push(`${file.name}(${r.problem})`);
+        continue;
+      }
+      const a = buildFallbackAnalysis(r.text);
+      loaded.push({ id: `${Date.now()}-${i}-${file.name}`, name: file.name, code: r.text, analysis: a, selectedLine: firstLineOf(a), isEditing: false });
+    }
+    if (all.length > MAX_FILES) skipped.push(`그 외 ${all.length - MAX_FILES}개(한 번에 최대 ${MAX_FILES}개)`);
+
+    if (!loaded.length) {
+      setDropMessage(`불러올 수 있는 코드 파일이 없어요: ${skipped.join(', ')}. .html, .css, .js, .py 같은 1MB 이하 코드 파일을 넣어주세요.`);
+      return;
+    }
+
+    // 지금 보던 파일 상태를 저장한 뒤, 새 파일들을 뒤에 이어 붙임 (같은 이름이면 새 내용으로 교체)
+    const currentId = activeFileIdRef.current;
+    const saved = openFiles.map((f) =>
+      f.id === currentId ? { ...f, code: inputCode, analysis, selectedLine: selectedLineNum, isEditing } : f
+    );
+    const newNames = new Set(loaded.map((f) => f.name));
+    const nextFiles = [...saved.filter((f) => !newNames.has(f.name)), ...loaded];
+    setOpenFiles(nextFiles);
+
+    const first = loaded[0];
+    setActiveFileId(first.id);
+    setInputCode(first.code);
+    setAnalysis(first.analysis);
+    setSelectedLineNum(first.selectedLine);
+    setIsEditing(false);
+    setShowExamples(false);
+
+    const skippedNote = skipped.length ? ` (건너뜀: ${skipped.join(', ')})` : '';
+    setDropMessage(
+      nextFiles.length > 1
+        ? `파일 ${loaded.length}개를 불러와 각각 해석했어요. 아래 점(●)이나 ← → 키로 파일을 넘겨 보세요.${skippedNote}`
+        : `'${first.name}' 파일을 불러와 분석했어요.${skippedNote}`
+    );
+
+    // AI 해석은 파일마다 차례대로 요청 (서버에 한꺼번에 몰리지 않게)
+    (async () => {
+      for (const f of loaded) await requestAi(f.id, f.code);
+    })();
+  };
+
+  const dropHandlers = {
+    onDragEnter: (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes('Files')) return;
+      e.preventDefault();
+      dragDepth.current += 1;
+      setIsDragging(true);
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes('Files')) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes('Files')) return;
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setIsDragging(false);
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      dragDepth.current = 0;
+      setIsDragging(false);
+      handleFileDrop(e.dataTransfer.files);
+    },
+  };
+
+  // 예시 코드 불러오기
+  const handleLoadExample = (preset: PresetItem) => {
+    setOpenFiles([]);
+    setActiveFileId(null);
+    setInputCode(preset.data.originalCode);
+    setAnalysis(preset.data);
+    setSelectedLineNum(preset.data.lines.find((l) => !l.isBlank)?.lineNumber || 1);
+    setIsEditing(false);
+    setShowExamples(false);
+  };
+
+  // 여러 파일 사이를 오가는 점(●) 내비게이션 — 파일이 2개 이상일 때만 표시
+  const fileDots =
+    openFiles.length > 1 ? (
+      <div className="flex flex-col items-center gap-1.5 py-1" aria-label="열린 파일 목록">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label="이전 파일"
+            disabled={activeIndex <= 0}
+            onClick={() => switchByOffset(-1)}
+            className="p-1 rounded-md text-[#9AA0B8] hover:text-white hover:bg-white/5 disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer"
           >
-            <span className="font-syne font-extrabold text-2xl lg:text-3xl tracking-tight uppercase">
-              CODE·EASY
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <div className="flex items-center gap-1.5 flex-wrap justify-center max-w-[420px]">
+            {openFiles.map((f, i) => {
+              const active = i === activeIndex;
+              const hasErr = (active ? analysis : f.analysis).lines.some((l) => l.hasError);
+              const waiting = pendingIds.includes(f.id);
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => switchFile(f.id)}
+                  title={`${i + 1}. ${f.name}${hasErr ? ' — 오류 있음' : ''}${waiting ? ' — AI 해석 중' : ''}`}
+                  aria-label={`${i + 1}번째 파일 ${f.name}${active ? ' (보는 중)' : ''}`}
+                  aria-current={active}
+                  className="p-1 cursor-pointer group"
+                >
+                  <span
+                    className={`block rounded-full transition-all ${active ? 'w-6 h-2.5' : 'w-2.5 h-2.5 group-hover:scale-125'} ${
+                      hasErr
+                        ? active ? 'bg-red-400' : 'bg-red-500/70'
+                        : active ? 'bg-[#8B7CFF]' : 'bg-[#4E546E] group-hover:bg-[#7D839C]'
+                    } ${waiting ? 'animate-pulse' : ''}`}
+                  />
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            aria-label="다음 파일"
+            disabled={activeIndex >= openFiles.length - 1}
+            onClick={() => switchByOffset(1)}
+            className="p-1 rounded-md text-[#9AA0B8] hover:text-white hover:bg-white/5 disabled:opacity-25 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-[11px] text-[#9AA0B8] flex items-center gap-1.5 max-w-full">
+          <span className="font-mono text-[#6E7491]">
+            {activeIndex + 1} / {openFiles.length}
+          </span>
+          <span className="truncate max-w-[260px] text-[#D5D8E5] font-semibold">{loadedFileName}</span>
+          <span className="text-[#6E7491]">· ← → 키로도 넘길 수 있어요</span>
+        </p>
+      </div>
+    ) : null;
+
+  // 코드 상자 아래 버튼 줄: [새 코드 작성] [예시 코드 ▾] [주 버튼]
+  const ActionBar = ({ primary }: { primary: React.ReactNode }) => (
+    <div className="grid grid-cols-3 gap-2.5">
+      <button
+        type="button"
+        onClick={() => {
+          setShowExamples(false);
+          handleResetNewCode();
+        }}
+        className={SECONDARY_BTN}
+        title="지금 코드를 지우고 새 코드를 입력합니다"
+      >
+        <FilePlus className="w-4 h-4" />
+        새 코드 작성
+      </button>
+
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setShowExamples((v) => !v)}
+          className={`${SECONDARY_BTN} w-full ${showExamples ? 'border-[#7C6CF6] text-white' : ''}`}
+          aria-expanded={showExamples}
+          aria-haspopup="menu"
+        >
+          <Lightbulb className="w-4 h-4" />
+          예시 코드
+          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showExamples ? 'rotate-180' : ''}`} />
+        </button>
+        {showExamples && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setShowExamples(false)} />
+            <div
+              role="menu"
+              className="absolute z-20 bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-1.5 rounded-xl bg-[#232637] border border-[#3A3F58] shadow-2xl shadow-black/50"
+            >
+              <p className="px-2.5 pt-1.5 pb-2 text-[10px] font-bold tracking-wider text-[#7D839C]">
+                예시 코드 불러오기
+              </p>
+              {SAMPLE_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleLoadExample(p)}
+                  className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-[#7C6CF6]/15 cursor-pointer transition-colors"
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-[#E6E8F0]">{p.label}</span>
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#30344A] text-[#A99CFF] shrink-0">
+                      {p.data.language}
+                    </span>
+                  </span>
+                  <span className="block mt-0.5 text-[10px] text-[#7D839C] leading-snug">{p.description}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      {primary}
+    </div>
+  );
+
+  const levelMeta = LEVELS.find((l) => l.id === level)!;
+
+  return (
+    <div className="min-h-screen bg-[#181A24] text-[#E6E8F0] flex flex-col font-sans selection:bg-[#7C6CF6] selection:text-white">
+      {/* 1. 상단 헤더 */}
+      <header className="bg-[#1D1F2B]/95 backdrop-blur-md border-b border-[#2A2D3D] sticky top-0 z-30 w-full">
+        <div className="w-full px-6 lg:px-8 py-3.5 flex items-center justify-between gap-6">
+          <a href="#top" className="flex items-center gap-1.5 shrink-0">
+            <Sparkles className="w-5 h-5 text-[#8B7CFF]" />
+            <span className="text-xl font-extrabold tracking-tight">
+              <span className="text-white">code</span>
+              <span className="text-[#8B7CFF]">mate</span>
+            </span>
+            <span className="ml-1 text-[10px] font-bold text-white bg-[#7C6CF6] px-1.5 py-0.5 rounded-md leading-none">
+              AI
             </span>
           </a>
-
-          {/* 메뉴바 중앙/우측: [초보자 / 중급자 / 전공자] 3개 탭 버튼만 깔끔하고 큼직하게 배치 */}
-          <div
-            className="flex items-center p-1.5 bg-[#F2F2F2] rounded-full border border-[#E5E5E5] shadow-xs"
-            role="tablist"
-            aria-label="학습자 레벨 선택"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={level === 'beginner'}
-              onClick={() => setLevel('beginner')}
-              className={`px-6 py-2.5 text-sm sm:text-base font-bold rounded-full transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
-                level === 'beginner'
-                  ? 'bg-white text-[#121212] shadow-sm ring-1 ring-[#E2E2E2]'
-                  : 'text-[#666666] hover:text-[#121212] hover:bg-white/60'
-              }`}
-            >
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0 shadow-xs" />
-              <span>초보자</span>
-            </button>
-
-            <button
-              type="button"
-              role="tab"
-              aria-selected={level === 'intermediate'}
-              onClick={() => setLevel('intermediate')}
-              className={`px-6 py-2.5 text-sm sm:text-base font-bold rounded-full transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
-                level === 'intermediate'
-                  ? 'bg-white text-[#121212] shadow-sm ring-1 ring-[#E2E2E2]'
-                  : 'text-[#666666] hover:text-[#121212] hover:bg-white/60'
-              }`}
-            >
-              <span className="w-2.5 h-2.5 rounded-full bg-[#0066FF] shrink-0 shadow-xs" />
-              <span>중급자</span>
-            </button>
-
-            <button
-              type="button"
-              role="tab"
-              aria-selected={level === 'advanced'}
-              onClick={() => setLevel('advanced')}
-              className={`px-6 py-2.5 text-sm sm:text-base font-bold rounded-full transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
-                level === 'advanced'
-                  ? 'bg-white text-[#121212] shadow-sm ring-1 ring-[#E2E2E2]'
-                  : 'text-[#666666] hover:text-[#121212] hover:bg-white/60'
-              }`}
-            >
-              <span className="w-2.5 h-2.5 rounded-full bg-purple-600 shrink-0 shadow-xs" />
-              <span>전공자</span>
-            </button>
-          </div>
-
-          {/* 우측 유틸리티: 코드 해석 버튼 */}
-          <div className="shrink-0">
-            <button
-              type="button"
-              onClick={() => handleRunAnalysis()}
-              className="px-6 py-2.5 text-xs sm:text-sm font-bold text-white bg-[#0066FF] hover:bg-[#0055D6] rounded-full transition-all flex items-center gap-2 cursor-pointer shadow-md active:scale-98"
-              title="현재 작성된 코드를 분석하고 해설을 생성합니다"
-            >
-              {isAiLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-white" />
-                  <span>해석 중...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4 text-sky-200" />
-                  <span>코드 해석</span>
-                </>
-              )}
-            </button>
-          </div>
+          <span className="hidden sm:block text-xs text-[#9AA0B8]">
+            내 수준에 맞춰 코드를 한 줄씩 설명해 드려요
+          </span>
         </div>
       </header>
 
-      {/* 2. 메인 워크스페이스: 화면을 가득 채우는 와이드 캔버스 (Full-Width Studio Grid) */}
-      <main className="flex-1 w-full px-6 sm:px-10 lg:px-14 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* ========================================================= */}
-        {/* [좌측: 7 cols] 코드 작성 및 실시간 해설 에디터 */}
-        {/* ========================================================= */}
-        <section className="lg:col-span-7 bg-[#121212] rounded-2xl border border-[#242424] shadow-sm overflow-hidden flex flex-col">
-          {/* 코드 뷰어 상단 바: 맨 왼쪽 위 화살표(코드가 있을 때만 표시), 코드 수정 모드 토글, 코드 검사 버튼 탑재 */}
-          <div className="px-5 py-3.5 bg-[#1C1C1C] border-b border-[#262626] flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-3">
-              {/* [사용자 요청] 코드가 아무것도 적혀져 있지 않은 상태에서는 안 뜨게 조건부 렌더링 */}
-              {inputCode.trim().length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleResetNewCode}
-                  title="코드가 없는 화면으로 돌아가기 (새 코드 입력)"
-                  className="px-2.5 py-1.5 text-xs font-semibold text-[#D4D4D4] hover:text-white bg-[#262626] hover:bg-[#333333] border border-[#3E3E3E] rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 group"
-                  aria-label="코드가 없는 화면으로 돌아가기"
-                >
-                  <ArrowLeft className="w-4 h-4 text-sky-400 group-hover:-translate-x-0.5 transition-transform" />
-                  <span className="hidden sm:inline font-medium text-[11px] text-[#CCCCCC] group-hover:text-white">
-                    새 코드 입력
+      <main id="top" className="flex-1 w-full max-w-[1200px] mx-auto px-6 py-10">
+        {/* 2. 히어로 */}
+        <div className="mb-8">
+          <p className="text-[11px] font-bold tracking-[0.18em] text-[#8B7CFF] uppercase mb-2">
+            Your personal code guide
+          </p>
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+            코드를 입력하면, 이해가 시작돼요.
+          </h1>
+          <p className="mt-2 text-sm text-[#9AA0B8]">
+            설명 수준을 고르고 코드를 분석해 보세요.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          {/* ========================================================= */}
+          {/* [좌측] 코드 입력 카드 */}
+          {/* ========================================================= */}
+          <section
+            {...dropHandlers}
+            className="relative lg:col-span-7 bg-[#1F2130] rounded-2xl border border-[#2E3145] overflow-hidden flex flex-col"
+          >
+            {/* 파일을 끌어오는 동안 덮개 표시 */}
+            {isDragging && (
+              <div className="pointer-events-none absolute inset-0 z-30 m-2 rounded-xl border-2 border-dashed border-[#8B7CFF] bg-[#181A24]/90 flex flex-col items-center justify-center gap-3">
+                <div className="w-14 h-14 rounded-2xl bg-[#7C6CF6]/20 flex items-center justify-center">
+                  <Upload className="w-7 h-7 text-[#B5ABFF]" />
+                </div>
+                <p className="text-base font-bold text-white">여기에 파일을 놓으면 바로 분석해요</p>
+                <p className="text-xs text-[#9AA0B8]">.html .css .js .ts .py .java 등 코드 파일 · 여러 개도 한 번에 · 파일당 1MB 이하</p>
+              </div>
+            )}
+            <div className="px-5 py-4 border-b border-[#2A2D3D] flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <Code2 className="w-4 h-4 text-[#8B7CFF] shrink-0" />
+                <span className="font-bold text-white text-sm shrink-0">코드 입력</span>
+                {loadedFileName && (
+                  <span
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#2A2D40] border border-[#34384F] text-[11px] text-[#D5D8E5] min-w-0"
+                    title={loadedFileName}
+                  >
+                    <FileCode2 className="w-3 h-3 text-[#A99CFF] shrink-0" />
+                    <span className="truncate max-w-[160px]">{loadedFileName}</span>
                   </span>
-                </button>
-              )}
-
-              <div className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#383838]" />
-                <span className="w-2.5 h-2.5 rounded-full bg-[#383838]" />
-                <span className="w-2.5 h-2.5 rounded-full bg-[#383838]" />
+                )}
+                {isAiLoading && (
+                  <span className="flex items-center gap-1 text-[#A99CFF] text-[11px]">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    AI 분석 중
+                  </span>
+                )}
               </div>
-              <span className="text-[#A3A3A3] font-mono text-[11px]">|</span>
-              <span className="font-semibold text-white tracking-tight">
-                {isEditing ? '코드 직접 입력 및 수정 중' : analysis.title || '코드 해설 뷰어'}
+              <span className="hidden sm:flex items-center gap-1 text-[11px] text-[#6E7491]">
+                <Upload className="w-3 h-3" />
+                코드 파일을 끌어다 놓아도 돼요
               </span>
-              {isAiLoading && (
-                <span className="flex items-center gap-1 text-[#0066FF] text-[11px] font-sans">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  AI 분석 중
-                </span>
-              )}
             </div>
 
-            {/* 우측 액션: [코드 검사] / [코드 수정하기] (화살표 없는 중복 초기화 버튼 제거) */}
-            <div className="flex items-center gap-2">
-              {isEditing ? (
-                <button
-                  type="button"
-                  onClick={() => handleRunAnalysis()}
-                  className="px-4 py-1.5 text-xs font-bold text-white bg-[#0066FF] hover:bg-[#0055D6] rounded-full transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-98"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>코드 검사</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(true)}
-                  className="px-3.5 py-1.5 text-xs font-semibold text-[#D4D4D4] bg-[#2A2A2A] hover:bg-[#383838] border border-[#3E3E3E] rounded-full transition-colors flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Code2 className="w-3.5 h-3.5 text-sky-400" />
-                  <span>코드 수정하기</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* 코드 수정 모드일 때: 직접 코드를 자유롭게 타이핑/수정할 수 있는 텍스트에어리어 */}
-          {isEditing ? (
-            <div className="p-4 sm:p-5 flex flex-col gap-3 bg-[#121212]">
-              <div className="flex items-center justify-between text-xs text-[#8E8E8E]">
-                <span>코드를 자유롭게 변경하고 우측 상단의 <strong>[코드 검사]</strong> 버튼을 누르세요.</span>
-                <span className="font-mono">{inputCode.split('\n').length}줄</span>
+            {dropMessage && (
+              <div
+                className={`mx-4 sm:mx-5 mt-4 px-3 py-2 rounded-lg text-xs flex items-center gap-2 ${
+                  /아니에요|커요|없어요|비어/.test(dropMessage)
+                    ? 'bg-red-500/10 border border-red-500/40 text-red-300'
+                    : 'bg-[#7C6CF6]/10 border border-[#7C6CF6]/40 text-[#C9C2FF]'
+                }`}
+                role="status"
+              >
+                <FileCode2 className="w-3.5 h-3.5 shrink-0" />
+                {dropMessage}
               </div>
-              <textarea
-                rows={16}
-                value={inputCode}
-                onChange={(e) => setInputCode(e.target.value)}
-                placeholder="검사할 코드를 여기에 붙여넣거나 수정하세요..."
-                className="w-full p-4 font-mono text-xs sm:text-sm text-white bg-[#181818] rounded-xl border border-[#333333] focus:outline-none focus:border-[#0066FF] leading-relaxed resize-y"
-              />
-            </div>
-          ) : (
-            <>
-              {/* 서브 안내 헤더 */}
-              <div className="px-5 py-2.5 bg-[#181818] border-b border-[#262626] text-[11px] flex items-center justify-between text-[#8E8E8E]">
-                <span>
-                  {level === 'beginner' &&
-                    '💡 줄을 클릭하면 우측에서 쉬운 풀이를 확인합니다. [코드 수정하기]를 누르면 언제든 코드를 고칠 수 있습니다.'}
-                  {level === 'intermediate' &&
-                    '🔍 줄을 클릭하면 우측에서 정밀 검증을 확인합니다. [코드 수정하기]를 누르면 언제든 코드를 고칠 수 있습니다.'}
-                  {level === 'advanced' &&
-                    '🚨 줄을 클릭하면 우측에서 잠재 버그와 누락 코드를 확인합니다. [코드 수정하기]를 누르면 언제든 코드를 고칠 수 있습니다.'}
-                </span>
-                <span className="font-mono text-[10px] text-[#666666]">
-                  {selectedLine.lineNumber} / {analysis.lines.length} L
-                </span>
-              </div>
+            )}
 
-          {/* 코드 리스트 (요구사항: 코드는 흰색, 선택 효과도 흰색, 코드 아래 주석은 연한 회색) */}
-          <div className="p-4 sm:p-5 overflow-y-auto max-h-[820px] divide-y divide-[#222222] font-mono">
-            {analysis.lines.map((line) => {
-              const isSelected = line.lineNumber === selectedLine.lineNumber;
-              const subComment = getSubCommentByLevel(line);
-              const isLineError = Boolean(line.hasError);
-
-              return (
-                <div
-                  key={line.lineNumber}
-                  onClick={() => setSelectedLineNum(line.lineNumber)}
-                  className={`w-full text-left py-2.5 px-3 rounded-xl transition-all cursor-pointer group flex flex-col gap-1 border-l-2 ${
-                    isLineError
-                      ? isSelected
-                        ? 'bg-red-950/40 border-red-500 ring-1 ring-red-500/50'
-                        : 'bg-red-950/20 border-red-500/60 hover:bg-red-950/30'
-                      : isSelected
-                      ? 'bg-white/10 border-white ring-1 ring-white/40'
-                      : 'border-transparent hover:bg-[#1A1A1A]'
-                  }`}
-                >
-                  {/* 1) 코드 텍스트: 문법 오류 시 선명한 빨간색, 정상 시 완전한 순수 흰색 */}
-                  <div className="flex items-start gap-3">
-                    <span
-                      className={`w-7 text-right select-none text-xs tabular-nums shrink-0 pt-0.5 font-bold ${
-                        isLineError
-                          ? 'text-red-400'
-                          : isSelected
-                          ? 'text-white font-extrabold'
-                          : 'text-[#525252]'
+            <div className="p-4 sm:p-5 flex flex-col gap-4">
+              {/* 레벨 선택 카드 */}
+              <div className="grid grid-cols-3 gap-2.5" role="tablist" aria-label="설명 수준 선택">
+                {LEVELS.map(({ id, label, desc, Icon }) => {
+                  const active = level === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setLevel(id)}
+                      className={`py-3.5 px-2 rounded-xl border flex flex-col items-center gap-1 cursor-pointer transition-all ${
+                        active
+                          ? 'bg-[#7C6CF6]/15 border-[#7C6CF6] shadow-[0_0_0_1px_rgba(124,108,246,0.35)]'
+                          : 'bg-[#232637] border-[#30344A] hover:border-[#4A4F6A]'
                       }`}
                     >
-                      {line.lineNumber}
-                    </span>
-                    <div className="flex-1 min-w-0 flex items-center gap-2">
-                      <pre
-                        className={`font-mono text-xs sm:text-sm font-medium whitespace-pre overflow-x-auto leading-relaxed ${
-                          isLineError ? 'text-red-400 font-semibold' : 'text-white'
-                        }`}
-                      >
-                        {line.code || ' '}
-                      </pre>
-                      {isLineError && (
-                        <span className="shrink-0 text-[10px] font-sans font-bold bg-red-900/60 text-red-200 border border-red-700/80 px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <XCircle className="w-3 h-3 text-red-400" />
-                          <span>오류 코드</span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* 2) 코드 바로 아래 주석: 연한 회색 (text-[#A3A3A3] / slate-400 계열) */}
-                  {!line.isBlank && (
-                    <div className="pl-10 text-xs font-sans text-[#A3A3A3] flex items-center gap-1.5 leading-normal">
-                      <span className="text-[#666666] font-mono select-none">
-                        //
+                      <Icon className={`w-4 h-4 ${active ? 'text-[#A99CFF]' : 'text-[#9AA0B8]'}`} />
+                      <span className={`text-sm font-bold ${active ? 'text-white' : 'text-[#D5D8E5]'}`}>
+                        {label}
                       </span>
-                      <span
-                        className={
-                          isLineError
-                            ? 'text-red-300 font-medium'
-                            : isSelected
-                            ? 'text-[#D4D4D4] font-medium'
-                            : 'text-[#A3A3A3]'
-                        }
-                      >
-                        {line.hasError && line.errorDetail ? `[오류 감지] ${line.errorDetail}` : subComment}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            </div>
-            </>
-          )}
-        </section>
-
-        {/* ========================================================= */}
-        {/* [우측: 5 cols] Mobbin 갤러리 카드형 상세 분석 패널 */}
-        {/* ========================================================= */}
-        <section className="lg:col-span-5 bg-white rounded-2xl border border-[#EAEAEA] shadow-sm p-6 space-y-6 sticky top-24">
-          {/* Header Zone: 선택된 줄 & 윗줄/아랫줄 내비게이터 */}
-          <div className="flex items-start justify-between gap-4 pb-4 border-b border-[#F0F0F0]">
-            <div>
-              <div className="flex items-center gap-2 mb-1.5">
-                <span className="font-mono text-xs font-semibold bg-[#F5F5F5] text-[#141414] px-3 py-0.5 rounded-full border border-[#E5E5E5] tabular-nums">
-                  Line {selectedLine.lineNumber}
-                </span>
-                <span
-                  className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${
-                    level === 'beginner'
-                      ? 'bg-emerald-50 text-emerald-800'
-                      : level === 'intermediate'
-                      ? 'bg-blue-50 text-[#0066FF]'
-                      : 'bg-purple-50 text-purple-800'
-                  }`}
-                >
-                  {level === 'beginner' && '초급자 튜터'}
-                  {level === 'intermediate' && '중급자 코드 리뷰'}
-                  {level === 'advanced' && '전공자 보안 & 감사'}
-                </span>
-              </div>
-              <h3 className="text-base font-bold text-[#141414] tracking-tight">
-                {selectedLine.shortRole}
-              </h3>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                disabled={selectedLine.lineNumber <= 1}
-                onClick={() => setSelectedLineNum((n) => Math.max(1, n - 1))}
-                className="px-3 py-1 text-xs font-semibold text-[#141414] bg-[#F5F5F5] hover:bg-[#EAEAEA] disabled:opacity-30 rounded-full cursor-pointer transition-colors"
-              >
-                이전 줄
-              </button>
-              <button
-                type="button"
-                disabled={selectedLine.lineNumber >= analysis.lines.length}
-                onClick={() =>
-                  setSelectedLineNum((n) =>
-                    Math.min(analysis.lines.length, n + 1)
-                  )
-                }
-                className="px-3 py-1 text-xs font-semibold text-[#141414] bg-[#F5F5F5] hover:bg-[#EAEAEA] disabled:opacity-30 rounded-full cursor-pointer transition-colors"
-              >
-                다음 줄
-              </button>
-            </div>
-          </div>
-
-          {/* 현재 선택된 코드 스니펫 미리보기 */}
-          <div
-            className={`p-3 rounded-xl font-mono text-xs overflow-x-auto border ${
-              selectedLine.hasError
-                ? 'bg-red-950/80 text-red-300 border-red-700 ring-1 ring-red-600'
-                : 'bg-[#141414] text-white border-[#2E2E2E]'
-            }`}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <code>{selectedLine.code || '(공백 라인)'}</code>
-              {selectedLine.hasError && (
-                <span className="text-[10px] font-sans font-bold bg-red-600 text-white px-2 py-0.5 rounded-full shrink-0">
-                  틀린 코드 감지됨
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* ========================================================= */}
-          {/* 🟢 [초보자 모드 전용 패널] */}
-          {/* ========================================================= */}
-          {level === 'beginner' && (
-            <div className="space-y-4">
-              {/* 1) 이 줄의 쉬운 풀이 */}
-              <div className="p-4 bg-[#F8F9FA] rounded-2xl border border-[#EAEAEA] space-y-1.5">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#141414]">
-                  <BookOpen className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>이 줄은 무슨 의미인가요?</span>
-                </div>
-                <p className="text-sm text-[#333333] leading-relaxed">
-                  {selectedLine.beginner.easyExplanation}
-                </p>
+                      <span className="text-[10px] text-[#7D839C]">{desc}</span>
+                    </button>
+                  );
+                })}
               </div>
 
-              {/* 2) 왜 이 코드가 여기서 사용되었나요? (목적과 이유 예측) */}
-              <div className="p-4 bg-white rounded-2xl border border-[#EAEAEA] space-y-1.5 shadow-2xs">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#141414]">
-                  <HelpCircle className="w-3.5 h-3.5 text-[#0066FF]" />
-                  <span>왜 이 코드가 여기서 사용되었나요? (목적과 이유 예측)</span>
-                </div>
-                <p className="text-sm text-[#525252] leading-relaxed">
-                  {selectedLine.beginner.whyUsedHere}
-                </p>
-              </div>
-
-              {/* 3) 사용자의 핵심 요청: 진짜 코드가 틀리게 작성되었을 때만 뜨는 틀린 코드 경고창 (빨간색 강조) */}
-              <div className="space-y-3 pt-1">
-                {selectedLine.hasError ? (
-                  <div className="p-4 rounded-2xl bg-[#FFF5F5] border border-red-300 space-y-2.5 shadow-xs ring-1 ring-red-400/40 animate-pulse">
-                    <div className="flex items-center gap-2 text-xs font-bold text-red-700">
-                      <XCircle className="w-4 h-4 text-red-600 shrink-0" />
-                      <span>🚨 주의: 이 줄의 코드가 틀리게 작성되었습니다!</span>
-                    </div>
-                    <pre className="p-3 bg-red-950 text-red-300 font-mono text-xs rounded-xl overflow-x-auto whitespace-pre-wrap border border-red-800 font-semibold">
-                      {selectedLine.code}
-                    </pre>
-                    <p className="text-xs text-red-800 leading-relaxed font-medium">
-                      <strong className="font-bold text-red-950">어디가 틀렸나요? </strong>
-                      {selectedLine.errorDetail ||
-                        selectedLine.beginner.wrongExample?.reason ||
-                        '문법적 오류나 태그/따옴표 닫힘이 누락되었습니다.'}
-                    </p>
+              {isEditing ? (
+                <>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-white">분석할 코드를 붙여넣으세요</span>
+                    <span className="font-mono text-[#6E7491]">{inputCode.split('\n').length}줄</span>
                   </div>
-                ) : (
-                  <div className="p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>현재 이 줄은 문법적 오류 없이 정상적으로 작성되었습니다.</span>
-                  </div>
-                )}
-
-                {/* 올바른 모범 코드 추천 안내 */}
-                {selectedLine.beginner.betterExample && (
-                  <div className="p-4 rounded-2xl bg-[#F0F7FF] border border-[#DBEAFE] space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-[#1E40AF]">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-[#0066FF] shrink-0" />
-                        <span>💡 권장하는 올바른 모범 코드</span>
-                      </div>
+                  <textarea
+                    rows={18}
+                    value={inputCode}
+                    onChange={(e) => setInputCode(e.target.value)}
+                    placeholder="검사할 코드를 여기에 붙여넣거나 수정하세요... 코드 파일(.html, .css, .js 등)을 이곳으로 끌어다 놓아도 됩니다."
+                    className="w-full p-4 font-mono text-xs sm:text-sm text-[#E6E8F0] bg-[#171923] rounded-xl border border-[#2E3145] focus:outline-none focus:border-[#7C6CF6] leading-relaxed resize-y placeholder:text-[#555B75]"
+                  />
+                  {fileDots}
+                  <ActionBar
+                    primary={
                       <button
                         type="button"
-                        onClick={() =>
-                          handleCopyCodeSnippet(
-                            selectedLine.beginner.betterExample!.code,
-                            'beginner-better'
-                          )
-                        }
-                        className="text-[11px] font-semibold text-[#0066FF] hover:text-[#0055D6] flex items-center gap-1 cursor-pointer bg-white px-2.5 py-1 rounded-full border border-[#BFDBFE]"
+                        onClick={() => handleRunAnalysis()}
+                        disabled={!inputCode.trim()}
+                        className={PRIMARY_BTN}
                       >
-                        {copiedSnippet === 'beginner-better' ? (
-                          <>
-                            <Check className="w-3 h-3 text-emerald-600" />
-                            <span>복사됨</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3 h-3" />
-                            <span>복사</span>
-                          </>
-                        )}
+                        <Sparkles className="w-4 h-4" />
+                        코드 분석하기
                       </button>
-                    </div>
-                    <pre className="p-2.5 bg-[#141414] text-[#93C5FD] font-mono text-xs rounded-xl overflow-x-auto whitespace-pre-wrap border border-[#2E2E2E]">
-                      {selectedLine.beginner.betterExample.code}
-                    </pre>
-                    <p className="text-xs text-[#1E3A8A] leading-relaxed">
-                      {selectedLine.beginner.betterExample.reason}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* 4) 태그 및 속성 단어별 의미 */}
-              {selectedLine.beginner.tokens && selectedLine.beginner.tokens.length > 0 && (
-                <div className="space-y-2.5 pt-2 border-t border-[#F0F0F0]">
-                  <span className="text-xs font-bold text-[#141414]">
-                    태그 · 속성 키워드 사전
-                  </span>
-                  <div className="divide-y divide-[#F0F0F0] border border-[#EAEAEA] rounded-2xl overflow-hidden text-xs bg-white">
-                    {selectedLine.beginner.tokens.map((t, idx) => (
-                      <div
-                        key={`${t.token}-${idx}`}
-                        className="p-3 flex flex-col sm:flex-row sm:items-baseline gap-2"
-                      >
-                        <code className="font-mono font-semibold text-[#141414] bg-[#F5F5F5] px-2 py-0.5 rounded-md shrink-0">
-                          {t.token}
-                        </code>
-                        <span className="text-[#525252] leading-relaxed">
-                          {t.meaning}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ========================================================= */}
-          {/* 🔵 [중급자 모드 전용 패널] */}
-          {/* ========================================================= */}
-          {level === 'intermediate' && (
-            <div className="space-y-4">
-              {/* 1) 코드가 틀리지 않았는지 꼼꼼한 확인 */}
-              <div className="p-4 bg-[#F0F7FF] rounded-2xl border border-[#DBEAFE] space-y-1.5">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#1E40AF]">
-                  <SearchCheck className="w-3.5 h-3.5 text-[#0066FF]" />
-                  <span>코드 무결성 & 구문 정밀 검증</span>
-                </div>
-                <p className="text-sm text-[#1E3A8A] leading-relaxed">
-                  {selectedLine.intermediate.codeCheckVerdict}
-                </p>
-              </div>
-
-              {/* 2) 더 나은 코드 추천 (리팩토링, 성능, 웹 표준) */}
-              {selectedLine.intermediate.betterRefactor && (
-                <div className="p-4 rounded-2xl bg-white border border-[#EAEAEA] space-y-2.5 shadow-2xs">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 text-xs font-bold text-[#141414]">
-                      <Zap className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                      <span>더 나은 리팩토링 추천 코드</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleCopyCodeSnippet(
-                          selectedLine.intermediate.betterRefactor!.code,
-                          'refactor-better'
-                        )
-                      }
-                      className="text-[11px] font-semibold text-[#525252] hover:text-[#141414] flex items-center gap-1 cursor-pointer bg-[#F5F5F5] px-2.5 py-1 rounded-full border border-[#E5E5E5]"
-                    >
-                      {copiedSnippet === 'refactor-better' ? (
-                        <>
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          <span>복사됨</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3 h-3" />
-                          <span>코드 복사</span>
-                        </>
+                    }
+                  />
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="font-bold text-white">궁금한 줄을 눌러보세요</span>
+                    <span className="flex items-center gap-2">
+                      {errorLines.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next =
+                              errorLines.find((n) => n > selectedLine.lineNumber) ?? errorLines[0];
+                            setSelectedLineNum(next);
+                          }}
+                          title="누를 때마다 다음 오류 줄로 이동합니다"
+                          className="px-2.5 py-1 rounded-lg bg-red-500/15 border border-red-500/40 text-red-300 font-bold flex items-center gap-1 cursor-pointer hover:bg-red-500/25 transition-colors"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                          오류 {errorLines.length}개
+                        </button>
                       )}
-                    </button>
-                  </div>
-                  <pre className="p-2.5 bg-[#141414] text-emerald-300 font-mono text-xs rounded-xl overflow-x-auto whitespace-pre-wrap border border-[#2E2E2E]">
-                    {selectedLine.intermediate.betterRefactor.code}
-                  </pre>
-                  <p className="text-xs text-[#525252] leading-relaxed">
-                    <strong className="text-[#141414]">개선 효과: </strong>
-                    {selectedLine.intermediate.betterRefactor.reason}
-                  </p>
-                </div>
-              )}
-
-              {/* 3) 지금까지 만든 코드에서 더 추가하면 좋을 코드 & 넣는 이유 */}
-              <div className="space-y-2.5 pt-1">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#141414]">
-                  <PlusCircle className="w-3.5 h-3.5 text-[#0066FF]" />
-                  <span>더 추가하면 좋을 추천 코드 & 넣는 이유</span>
-                </div>
-
-                {selectedLine.intermediate.suggestedAdditions &&
-                selectedLine.intermediate.suggestedAdditions.length > 0 ? (
-                  <div className="space-y-3">
-                    {selectedLine.intermediate.suggestedAdditions.map((addition, idx) => (
-                      <div
-                        key={idx}
-                        className="p-4 bg-[#F8F9FA] rounded-2xl border border-[#EAEAEA] space-y-2"
-                      >
-                        <div className="flex items-center justify-between">
-                          <code className="font-mono text-xs font-bold text-[#141414] bg-white px-2.5 py-1 rounded-lg border border-[#E0E0E0]">
-                            {addition.code}
-                          </code>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleCopyCodeSnippet(addition.code, `add-${idx}`)
-                            }
-                            className="text-[11px] font-semibold text-[#0066FF] hover:text-[#0055D6] flex items-center gap-1 cursor-pointer bg-white px-2.5 py-0.5 rounded-full border border-[#BFDBFE]"
-                          >
-                            {copiedSnippet === `add-${idx}` ? (
-                              <Check className="w-3 h-3 text-emerald-600" />
-                            ) : (
-                              <Copy className="w-3 h-3" />
-                            )}
-                            <span>코드 복사</span>
-                          </button>
-                        </div>
-                        <div className="text-xs text-[#141414] font-medium">
-                          <strong>의미: </strong>
-                          {addition.meaning}
-                        </div>
-                        <div className="text-xs text-[#525252] leading-relaxed">
-                          <strong className="text-[#141414]">왜 넣어야 하나요? </strong>
-                          {addition.whyAdd}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="p-3.5 bg-[#F5F5F5] border border-[#EAEAEA] rounded-2xl text-xs text-[#737373]">
-                    현재 구문은 핵심 요소가 충실히 갖추어져 있어 추가적인 옵션이 불필요합니다.
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* ========================================================= */}
-          {/* 🟣 [전공자 모드 전용 패널] */}
-          {/* ========================================================= */}
-          {level === 'advanced' && (
-            <div className="space-y-4">
-              {/* 1) 코드 오류 & 런타임 결함 분석 */}
-              <div
-                className={`p-4 rounded-2xl border space-y-1.5 ${
-                  selectedLine.advanced.bugAudit.hasIssue
-                    ? 'bg-[#FFF8F8] border-[#FEE2E2]'
-                    : 'bg-[#F8F9FA] border-[#EAEAEA]'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#141414]">
-                    {selectedLine.advanced.bugAudit.hasIssue ? (
-                      <ShieldAlert className="w-3.5 h-3.5 text-red-600" />
-                    ) : (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    )}
-                    <span>
-                      {selectedLine.advanced.bugAudit.hasIssue
-                        ? `오류 & 결함: ${selectedLine.advanced.bugAudit.issueTitle}`
-                        : `오류 없음: ${selectedLine.advanced.bugAudit.issueTitle}`}
+                      {analysis.language && (
+                        <span className="px-2.5 py-1 rounded-lg bg-[#232637] border border-[#30344A] text-[#D5D8E5] font-semibold">
+                          {analysis.language}
+                        </span>
+                      )}
+                      <span className="font-mono text-[10px] text-[#6E7491]">
+                        {selectedLine.lineNumber} / {analysis.lines.length}
+                      </span>
                     </span>
                   </div>
-                  {selectedLine.advanced.bugAudit.hasIssue && (
-                    <span className="text-[10px] font-mono uppercase px-2.5 py-0.5 bg-red-100 text-red-800 rounded-full font-bold">
-                      {selectedLine.advanced.bugAudit.severity}
+
+                  {/* 코드 리스트 */}
+                  {/* 가로·세로 스크롤을 이 상자 하나에서 처리 → 가로 스크롤바가 항상 코드 상자 맨 아래에 고정 */}
+                  <div className="code-scroll bg-[#171923] rounded-xl border border-[#2A2D3D] overflow-auto max-h-[560px] font-mono">
+                    <div className="min-w-full w-max py-2">
+                    {analysis.lines.map((line) => {
+                      const isSelected = line.lineNumber === selectedLine.lineNumber;
+                      const subComment = getSubCommentByLevel(line);
+                      const isLineError = Boolean(line.hasError);
+                      const isDimmed =
+                        level === 'intermediate' && line.intermediate.isBasic && !isSelected && !isLineError;
+
+                      return (
+                        <div
+                          key={line.lineNumber}
+                          id={`code-line-${line.lineNumber}`}
+                          onClick={() => setSelectedLineNum(line.lineNumber)}
+                          className={`w-full py-1.5 pr-3 cursor-pointer flex flex-col gap-0.5 border-l-2 transition-colors ${isDimmed ? 'opacity-40 ' : ''}${
+                            isLineError
+                              ? isSelected
+                                ? 'bg-red-500/15 border-red-400'
+                                : 'bg-red-500/5 border-red-500/50 hover:bg-red-500/10'
+                              : isSelected
+                              ? 'bg-[#7C6CF6]/15 border-[#8B7CFF]'
+                              : 'border-transparent hover:bg-white/[0.03]'
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <span
+                              className={`w-9 text-right select-none text-xs tabular-nums shrink-0 pt-0.5 ${
+                                isLineError
+                                  ? 'text-red-400'
+                                  : isSelected
+                                  ? 'text-white font-bold'
+                                  : 'text-[#4E546E]'
+                              }`}
+                            >
+                              {line.lineNumber}
+                            </span>
+                            <div className="flex-1 flex items-center gap-2">
+                              <pre
+                                className={`text-xs sm:text-[13px] whitespace-pre leading-relaxed ${
+                                  isLineError ? 'text-red-400 font-semibold' : 'text-[#E6E8F0]'
+                                }`}
+                              >
+                                {line.code || ' '}
+                              </pre>
+                              {isLineError && (
+                                <span className="shrink-0 text-[10px] font-sans font-bold bg-red-500/15 text-red-300 border border-red-500/40 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <XCircle className="w-3 h-3" />
+                                  오류 코드
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {!line.isBlank && (isSelected || isLineError) && (
+                            <div className="sticky left-0 max-w-[36rem] pl-12 text-[11px] font-sans flex items-start gap-1.5 leading-normal whitespace-normal">
+                              <span className="text-[#555B75] font-mono select-none">//</span>
+                              <span className={isLineError ? 'text-red-300' : 'text-[#A99CFF]'}>
+                                {line.hasError && line.errorDetail
+                                  ? `[오류 감지] ${line.errorDetail}`
+                                  : subComment}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    </div>
+                  </div>
+
+                  {fileDots}
+
+                  <p className="text-[11px] text-[#7D839C] flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-[#8B7CFF]" />
+                    {level === 'intermediate'
+                      ? '흐리게 표시된 줄은 기본 코드라 설명을 생략했어요. 방향키(↑ ↓)로도 이동할 수 있어요.'
+                      : '줄을 누르면 오른쪽에 그 줄의 설명이 나와요. 방향키(↑ ↓)로도 이동할 수 있어요.'}
+                  </p>
+
+                  <ActionBar
+                    primary={
+                      <button
+                        type="button"
+                        onClick={() => setIsEditing(true)}
+                        className={PRIMARY_BTN}
+                      >
+                        <Pencil className="w-4 h-4" />
+                        코드 수정
+                      </button>
+                    }
+                  />
+                </>
+              )}
+            </div>
+          </section>
+
+          {/* ========================================================= */}
+          {/* [우측] 맞춤 코드 설명 카드 */}
+          {/* ========================================================= */}
+          <section className="lg:col-span-5 bg-[#1F2130] rounded-2xl border border-[#2E3145] overflow-hidden lg:sticky lg:top-20">
+            <div className="px-5 py-4 border-b border-[#2A2D3D] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[#8B7CFF]" />
+                <span className="font-bold text-white text-sm">맞춤 코드 설명</span>
+              </div>
+              <span className="text-[11px] text-[#A99CFF]">{levelMeta.label} 모드</span>
+            </div>
+
+            <div className="code-scroll p-4 sm:p-5 space-y-4 max-h-[calc(100vh-10rem)] overflow-y-auto">
+              {/* 선택된 줄 카드 */}
+              <div className="p-4 rounded-xl bg-[#232637] border border-[#30344A] space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#7C6CF6]/20 text-[#B5ABFF]">
+                      {selectedLine.lineNumber}번째 줄
+                    </span>
+                    {selectedLine.shortRole && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300">
+                        {selectedLine.shortRole}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      aria-label="이전 줄"
+                      disabled={selectedLine.lineNumber <= 1}
+                      onClick={() => setSelectedLineNum((n) => Math.max(1, n - 1))}
+                      className="p-1 rounded-md text-[#9AA0B8] hover:text-white hover:bg-white/5 disabled:opacity-30 cursor-pointer"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="다음 줄"
+                      disabled={selectedLine.lineNumber >= analysis.lines.length}
+                      onClick={() =>
+                        setSelectedLineNum((n) => Math.min(analysis.lines.length, n + 1))
+                      }
+                      className="p-1 rounded-md text-[#9AA0B8] hover:text-white hover:bg-white/5 disabled:opacity-30 cursor-pointer"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <div
+                  className={`px-3 py-2.5 rounded-lg font-mono text-xs overflow-x-auto flex items-center justify-between gap-2 ${
+                    selectedLine.hasError
+                      ? 'bg-red-500/10 text-red-300 border border-red-500/40'
+                      : 'bg-[#2B2F44] text-[#D5D8E5]'
+                  }`}
+                >
+                  <code className="whitespace-pre">{selectedLine.code || '(공백 라인)'}</code>
+                  {selectedLine.hasError && (
+                    <span className="text-[10px] font-sans font-bold bg-red-500 text-white px-2 py-0.5 rounded-full shrink-0">
+                      틀린 코드
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-[#525252] leading-relaxed font-mono">
-                  {selectedLine.advanced.bugAudit.issueDetail}
-                </p>
               </div>
 
-              {/* 2) 누락된 코드 찾아주기 */}
-              <div
-                className={`p-4 rounded-2xl border space-y-2 ${
-                  selectedLine.advanced.missingAudit.hasMissing
-                    ? 'bg-[#FFFBEB] border-[#FEF3C7]'
-                    : 'bg-[#F8F9FA] border-[#EAEAEA]'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#92400E]">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+              {/* 🟢 초급자 */}
+              {level === 'beginner' && (
+                <div className="space-y-3">
+                  <InfoBlock icon={<BookOpen className="w-3.5 h-3.5 text-emerald-400" />} title="이 줄은 무슨 의미인가요?">
+                    {selectedLine.beginner.definition && (
+                      <div className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-[13px] text-emerald-200 leading-relaxed">
+                        <span className="font-bold text-emerald-300">정의 </span>
+                        {selectedLine.beginner.definition}
+                      </div>
+                    )}
+                    <p className="text-sm text-[#E6E8F0] leading-relaxed">
+                      {selectedLine.beginner.definition && (
+                        <span className="font-bold text-[#A99CFF]">이 줄에서는 </span>
+                      )}
+                      {selectedLine.beginner.easyExplanation}
+                    </p>
+                  </InfoBlock>
+
+                  <InfoBlock icon={<HelpCircle className="w-3.5 h-3.5 text-[#A99CFF]" />} title="왜 여기서 사용되었나요?">
+                    <p className="text-sm text-[#B4B9CC] leading-relaxed">
+                      {selectedLine.beginner.whyUsedHere}
+                    </p>
+                  </InfoBlock>
+
+                  {selectedLine.hasError ? (
+                    <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/40 space-y-2.5">
+                      <div className="flex items-center gap-2 text-xs font-bold text-red-300">
+                        <XCircle className="w-4 h-4 shrink-0" />
+                        주의: 이 줄의 코드가 틀리게 작성되었어요!
+                      </div>
+                      <pre className="p-3 bg-[#171923] text-red-300 font-mono text-xs rounded-lg overflow-x-auto whitespace-pre-wrap">
+                        {selectedLine.code}
+                      </pre>
+                      <p className="text-xs text-red-200/90 leading-relaxed">
+                        <strong className="text-red-200">어디가 틀렸나요? </strong>
+                        {selectedLine.errorDetail ||
+                          selectedLine.beginner.wrongExample?.reason ||
+                          '문법적 오류나 태그/따옴표 닫힘이 누락되었습니다.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300 flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      이 줄은 문법 오류 없이 정상적으로 작성되었어요.
+                    </div>
+                  )}
+
+                  {selectedLine.beginner.betterExample && (
+                    <InfoBlock
+                      icon={<CheckCircle2 className="w-3.5 h-3.5 text-[#A99CFF]" />}
+                      title="권장하는 모범 코드"
+                      action={<CopyButton code={selectedLine.beginner.betterExample.code} id="beginner-better" />}
+                    >
+                      <CodeBox className="text-[#B5ABFF]">{selectedLine.beginner.betterExample.code}</CodeBox>
+                      <p className="text-xs text-[#B4B9CC] leading-relaxed">
+                        {selectedLine.beginner.betterExample.reason}
+                      </p>
+                    </InfoBlock>
+                  )}
+
+                  {selectedLine.beginner.tokens && selectedLine.beginner.tokens.length > 0 && (
+                    <InfoBlock title="태그 · 속성 키워드 사전">
+                      <div className="divide-y divide-[#30344A] text-xs">
+                        {selectedLine.beginner.tokens.map((t, idx) => (
+                          <div key={`${t.token}-${idx}`} className="py-2 first:pt-0 last:pb-0 flex flex-col sm:flex-row sm:items-baseline gap-2">
+                            <code className="font-mono font-semibold text-[#B5ABFF] bg-[#7C6CF6]/10 px-2 py-0.5 rounded-md shrink-0">
+                              {t.token}
+                            </code>
+                            <span className="text-[#B4B9CC] leading-relaxed">{t.meaning}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </InfoBlock>
+                  )}
+                </div>
+              )}
+
+              {/* 🔵 중급자 */}
+              {level === 'intermediate' && selectedLine.intermediate.isBasic && (
+                <div className="px-4 py-3.5 rounded-xl bg-[#232637] border border-dashed border-[#3A3F58] text-xs text-[#9AA0B8] flex items-start gap-2">
+                  <MinusCircle className="w-4 h-4 shrink-0 text-[#6E7491]" />
                   <span>
-                    {selectedLine.advanced.missingAudit.hasMissing
-                      ? `누락된 필수 코드: ${selectedLine.advanced.missingAudit.missingTitle}`
-                      : '누락된 필수 요소 없음 (검증 통과)'}
+                    <strong className="text-[#D5D8E5]">기본 코드라서 설명을 생략했어요.</strong>{' '}
+                    {selectedLine.intermediate.howItWorks}
                   </span>
                 </div>
+              )}
 
-                {selectedLine.advanced.missingAudit.hasMissing && (
-                  <>
-                    <pre className="p-2.5 bg-[#141414] text-amber-200 font-mono text-xs rounded-xl overflow-x-auto whitespace-pre-wrap border border-[#2E2E2E]">
-                      {selectedLine.advanced.missingAudit.missingSnippet}
-                    </pre>
-                    <p className="text-xs text-[#78350F] leading-relaxed">
-                      <strong>누락 시 영향: </strong>
-                      {selectedLine.advanced.missingAudit.reason}
+              {level === 'intermediate' && !selectedLine.intermediate.isBasic && (
+                <div className="space-y-3">
+                  <InfoBlock icon={<Settings2 className="w-3.5 h-3.5 text-[#A99CFF]" />} title="어떻게 작동하나요?">
+                    <p className="text-sm text-[#E6E8F0] leading-relaxed">
+                      {selectedLine.intermediate.howItWorks}
                     </p>
-                  </>
-                )}
-              </div>
+                  </InfoBlock>
 
-              {/* 3) 전공자 추천 패치 코드 (오류 & 누락 보완 완료본) */}
-              {selectedLine.advanced.recommendedPatch && (
-                <div className="p-4 rounded-2xl bg-white border border-[#EAEAEA] space-y-2.5 shadow-2xs">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 text-xs font-bold text-[#141414]">
-                      <Wrench className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-                      <span>추천 패치 코드 (Recommended Patch)</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleCopyCodeSnippet(
-                          selectedLine.advanced.recommendedPatch!,
-                          'patch-code'
-                        )
-                      }
-                      className="text-[11px] font-semibold text-purple-700 hover:text-purple-900 flex items-center gap-1 cursor-pointer bg-purple-50 px-2.5 py-1 rounded-full border border-purple-200"
+                  <InfoBlock icon={<SearchCheck className="w-3.5 h-3.5 text-sky-400" />} title="코드 무결성 & 구문 검증">
+                    <p className="text-sm text-[#B4B9CC] leading-relaxed">
+                      {selectedLine.intermediate.codeCheckVerdict}
+                    </p>
+                  </InfoBlock>
+
+                  {selectedLine.intermediate.betterRefactor && (
+                    <InfoBlock
+                      icon={<Zap className="w-3.5 h-3.5 text-amber-400" />}
+                      title="더 나은 리팩토링 추천"
+                      action={<CopyButton code={selectedLine.intermediate.betterRefactor.code} id="refactor-better" label="코드 복사" />}
                     >
-                      {copiedSnippet === 'patch-code' ? (
-                        <>
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          <span>패치 복사됨</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3 h-3" />
-                          <span>패치 복사</span>
-                        </>
+                      <CodeBox className="text-emerald-300">{selectedLine.intermediate.betterRefactor.code}</CodeBox>
+                      <p className="text-xs text-[#B4B9CC] leading-relaxed">
+                        <strong className="text-[#E6E8F0]">개선 효과: </strong>
+                        {selectedLine.intermediate.betterRefactor.reason}
+                      </p>
+                    </InfoBlock>
+                  )}
+
+                  <InfoBlock icon={<PlusCircle className="w-3.5 h-3.5 text-[#A99CFF]" />} title="더 추가하면 좋을 코드">
+                    {selectedLine.intermediate.suggestedAdditions &&
+                    selectedLine.intermediate.suggestedAdditions.length > 0 ? (
+                      <div className="space-y-2.5">
+                        {selectedLine.intermediate.suggestedAdditions.map((addition, idx) => (
+                          <div key={idx} className="p-3 bg-[#1B1D2A] rounded-lg border border-[#30344A] space-y-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <code className="font-mono text-xs font-semibold text-[#B5ABFF] overflow-x-auto">
+                                {addition.code}
+                              </code>
+                              <CopyButton code={addition.code} id={`add-${idx}`} />
+                            </div>
+                            <div className="text-xs text-[#E6E8F0]">
+                              <strong>의미: </strong>
+                              {addition.meaning}
+                            </div>
+                            <div className="text-xs text-[#B4B9CC] leading-relaxed">
+                              <strong className="text-[#E6E8F0]">왜 넣어야 하나요? </strong>
+                              {addition.whyAdd}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-[#7D839C]">
+                        현재 구문은 핵심 요소가 충실히 갖추어져 있어 추가할 코드가 없어요.
+                      </p>
+                    )}
+                  </InfoBlock>
+                </div>
+              )}
+
+              {/* 🟣 전공자 */}
+              {level === 'advanced' && (
+                <div className="space-y-3">
+                  {selectedLine.advanced.technicalDetail && (
+                    <InfoBlock icon={<Microscope className="w-3.5 h-3.5 text-[#A99CFF]" />} title="기술 분석">
+                      <p className="text-[13px] text-[#E6E8F0] leading-relaxed">
+                        {selectedLine.advanced.technicalDetail}
+                      </p>
+                    </InfoBlock>
+                  )}
+                  <div
+                    className={`p-4 rounded-xl border space-y-1.5 ${
+                      selectedLine.advanced.bugAudit.hasIssue
+                        ? 'bg-red-500/10 border-red-500/40'
+                        : 'bg-[#232637] border-[#30344A]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-white">
+                        {selectedLine.advanced.bugAudit.hasIssue ? (
+                          <ShieldAlert className="w-3.5 h-3.5 text-red-400" />
+                        ) : (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        )}
+                        <span>
+                          {selectedLine.advanced.bugAudit.hasIssue
+                            ? `오류 & 결함: ${selectedLine.advanced.bugAudit.issueTitle}`
+                            : `오류 없음: ${selectedLine.advanced.bugAudit.issueTitle}`}
+                        </span>
+                      </div>
+                      {selectedLine.advanced.bugAudit.hasIssue && (
+                        <span className="text-[10px] font-mono uppercase px-2 py-0.5 bg-red-500/20 text-red-300 rounded-full font-bold">
+                          {selectedLine.advanced.bugAudit.severity}
+                        </span>
                       )}
-                    </button>
+                    </div>
+                    <p className="text-xs text-[#B4B9CC] leading-relaxed">
+                      {selectedLine.advanced.bugAudit.issueDetail}
+                    </p>
                   </div>
-                  <pre className="p-2.5 bg-[#141414] text-purple-200 font-mono text-xs rounded-xl overflow-x-auto whitespace-pre-wrap border border-[#2E2E2E]">
-                    {selectedLine.advanced.recommendedPatch}
-                  </pre>
-                  <p className="text-xs text-[#737373]">
-                    오류 및 누락 요소를 패치한 표준 규격 완성형 코드 스니펫입니다.
-                  </p>
+
+                  <div
+                    className={`p-4 rounded-xl border space-y-2 ${
+                      selectedLine.advanced.missingAudit.hasMissing
+                        ? 'bg-amber-500/10 border-amber-500/30'
+                        : 'bg-[#232637] border-[#30344A]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      <span>
+                        {selectedLine.advanced.missingAudit.hasMissing
+                          ? `누락된 필수 코드: ${selectedLine.advanced.missingAudit.missingTitle}`
+                          : '누락된 필수 요소 없음 (검증 통과)'}
+                      </span>
+                    </div>
+                    {selectedLine.advanced.missingAudit.hasMissing && (
+                      <>
+                        <CodeBox className="text-amber-200">{selectedLine.advanced.missingAudit.missingSnippet}</CodeBox>
+                        <p className="text-xs text-amber-100/80 leading-relaxed">
+                          <strong>누락 시 영향: </strong>
+                          {selectedLine.advanced.missingAudit.reason}
+                        </p>
+                      </>
+                    )}
+                  </div>
+
+                  {selectedLine.advanced.recommendedPatch && (
+                    <InfoBlock
+                      icon={<Wrench className="w-3.5 h-3.5 text-[#A99CFF]" />}
+                      title="추천 패치 코드"
+                      action={<CopyButton code={selectedLine.advanced.recommendedPatch} id="patch-code" label="패치 복사" />}
+                    >
+                      <CodeBox className="text-[#B5ABFF]">{selectedLine.advanced.recommendedPatch}</CodeBox>
+                      <p className="text-xs text-[#7D839C]">
+                        오류와 누락 요소를 보완한 완성형 코드예요.
+                      </p>
+                    </InfoBlock>
+                  )}
                 </div>
               )}
             </div>
-          )}
-        </section>
+          </section>
+        </div>
+
+        <p className="mt-6 text-[11px] text-[#6E7491]">
+          AI가 만든 설명은 틀릴 수 있으니 중요한 코드는 직접 실행해 확인해 보세요.
+        </p>
       </main>
     </div>
+  );
+}
+
+function InfoBlock({
+  icon,
+  title,
+  action,
+  children,
+}: {
+  icon?: React.ReactNode;
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="p-4 rounded-xl bg-[#232637] border border-[#30344A] space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-xs font-bold text-white">
+          {icon}
+          <span>{title}</span>
+        </div>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function CodeBox({ className = '', children }: { className?: string; children: React.ReactNode }) {
+  return (
+    <pre className={`p-2.5 bg-[#171923] font-mono text-xs rounded-lg overflow-x-auto whitespace-pre-wrap border border-[#2A2D3D] ${className}`}>
+      {children}
+    </pre>
   );
 }
