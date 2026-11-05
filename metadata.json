@@ -1,0 +1,6 @@
+{
+  "name": "CODE EASY — AI 코드 해설 및 바이브 코딩 튜터",
+  "description": "AI에게 코딩을 맡긴 초보 개발자가 자신이 받은 코드를 한 줄씩 이해하고 실행 흐름과 안전성을 검증할 수 있도록 돕는 AI 코드 해설 서비스",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
