@@ -1,6 +1,6 @@
-// 고른 줄을 "이렇게 바꾸고 싶어"라고 말하면 Qwen2.5-1.5B-Instruct가 고치는 방법과 새 코드를 알려주는 패널
+// 고른 줄을 "이렇게 바꾸고 싶어"라고 말하면 Claude가 고치는 방법과 새 코드를 알려주는 패널
 import React, { useEffect, useState } from 'react';
-import { Bot, Loader2, Send, Check, Copy, Wand2, AlertTriangle } from 'lucide-react';
+import { Bot, Loader2, Send, Check, Copy, Wand2 } from 'lucide-react';
 
 interface EditResult {
   keyChange: string;
@@ -13,7 +13,7 @@ interface EditResult {
 
 const EXAMPLES = ['이 줄의 공백을 더 넓히고 싶어', '글자 색을 파란색으로 바꾸고 싶어', '이 부분을 함수로 묶고 싶어'];
 
-export default function QwenEditAssistant({
+export default function CodeEditAssistant({
   code,
   startLine,
   endLine,
@@ -31,15 +31,6 @@ export default function QwenEditAssistant({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<EditResult | null>(null);
   const [copied, setCopied] = useState(false);
-  const [modelReady, setModelReady] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    fetch('/api/qwen/status')
-      .then((r) => r.json())
-      .then((s) => setModelReady(Boolean(s.modelFileExists)))
-      .catch(() => setModelReady(false));
-  }, []);
-
   // 다른 줄을 고르면 이전 결과는 지움
   useEffect(() => {
     setResult(null);
@@ -54,7 +45,7 @@ export default function QwenEditAssistant({
     setError(null);
     setResult(null);
     try {
-      const res = await fetch('/api/qwen/edit', {
+      const res = await fetch('/api/edit-suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code, startLine, endLine, request: text, fileName }),
@@ -90,15 +81,8 @@ export default function QwenEditAssistant({
           <Bot className="w-3.5 h-3.5 text-[#A99CFF]" />
           <span>이렇게 바꾸고 싶어요</span>
         </div>
-        <span className="text-[10px] text-[#7D839C]">Qwen2.5-1.5B · {rangeLabel}</span>
+        <span className="text-[10px] text-[#7D839C]">Claude · {rangeLabel}</span>
       </div>
-
-      {modelReady === false && (
-        <p className="text-[11px] text-amber-300 flex items-start gap-1.5">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
-          Qwen 모델 파일이 아직 없어요. 터미널에서 <code className="font-mono">npm run download-model</code>을 실행해 주세요.
-        </p>
-      )}
 
       <p className="text-[11px] text-[#7D839C]">
         Shift를 누른 채 다른 줄을 클릭하면 여러 줄을 한꺼번에 고를 수 있어요.
@@ -149,7 +133,7 @@ export default function QwenEditAssistant({
       {loading && (
         <p className="text-xs text-[#A99CFF] flex items-center gap-1.5">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          Qwen이 고치는 방법을 생각하고 있어요… (처음 한 번은 모델을 불러오느라 더 걸려요)
+          Claude가 고치는 방법을 생각하고 있어요…
         </p>
       )}
 
@@ -194,7 +178,7 @@ export default function QwenEditAssistant({
             <Wand2 className="w-4 h-4" />
             내 코드에 적용하기
           </button>
-          <p className="text-[10px] text-[#6E7491]">작은 AI 모델이라 틀릴 수 있어요. 적용한 뒤 꼭 실행해서 확인해 보세요.</p>
+          <p className="text-[10px] text-[#6E7491]">AI가 만든 답은 틀릴 수 있어요. 적용한 뒤 꼭 실행해서 확인해 보세요.</p>
         </div>
       )}
     </div>

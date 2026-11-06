@@ -47,7 +47,7 @@ const SECONDARY_BTN =
 const PRIMARY_BTN =
   'py-3 text-sm font-bold text-white bg-[#7C6CF6] hover:bg-[#6B5AE8] disabled:opacity-40 disabled:cursor-not-allowed rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap';
 import { buildFallbackAnalysis } from './utils/codeAnalyzer.ts';
-import QwenEditAssistant from './components/QwenEditAssistant.tsx';
+import CodeEditAssistant from './components/CodeEditAssistant.tsx';
 
 // 레벨 아이콘: 막대 3개 중 채워진 개수로 수준 표시 (초급 1칸 · 중급 2칸 · 전공 3칸)
 function LevelBars({ filled, active }: { filled: number; active: boolean }) {
@@ -105,7 +105,7 @@ export default function App() {
   const [showExamples, setShowExamples] = useState<boolean>(false); // 예시 코드 메뉴 열림 여부
   const [isDragging, setIsDragging] = useState<boolean>(false); // 파일을 끌어오는 중인지
   const [dropMessage, setDropMessage] = useState<string | null>(null); // 파일 불러오기 안내/오류
-  const [appliedNotice, setAppliedNotice] = useState<string | null>(null); // Qwen 수정 적용 후 안내
+  const [appliedNotice, setAppliedNotice] = useState<string | null>(null); // 수정 적용 후 안내
   const dragDepth = useRef(0);
 
   const errorLines = analysis.lines.filter((l) => l.hasError).map((l) => l.lineNumber);
@@ -114,7 +114,7 @@ export default function App() {
     analysis.lines.find((l) => l.lineNumber === selectedLineNum) ||
     analysis.lines[0];
 
-  // Qwen 수정 요청에 쓸 줄 범위 (Shift+클릭으로 여러 줄 선택)
+  // 수정 요청에 쓸 줄 범위 (Shift+클릭으로 여러 줄 선택)
   const rangeStart = Math.min(selectedLine.lineNumber, rangeEndNum ?? selectedLine.lineNumber);
   const rangeEnd = Math.max(selectedLine.lineNumber, rangeEndNum ?? selectedLine.lineNumber);
   const analyzedCode = analysis.lines.map((l) => l.code).join('\n');
@@ -546,9 +546,9 @@ export default function App() {
 
   const levelMeta = LEVELS.find((l) => l.id === level)!;
 
-  // 🤖 Qwen: 고른 줄을 요청대로 고치는 방법 (초급자는 "왜 여기서 사용되었나요?" 아래, 나머지는 설명 맨 아래)
-  const qwenPanel = isEditing ? null : (
-    <QwenEditAssistant
+  // 🤖 Claude: 고른 줄을 요청대로 고치는 방법 (초급자는 "왜 여기서 사용되었나요?" 아래, 나머지는 설명 맨 아래)
+  const editPanel = isEditing ? null : (
+    <CodeEditAssistant
       code={analyzedCode}
       startLine={rangeStart}
       endLine={rangeEnd}
@@ -946,7 +946,7 @@ export default function App() {
                     </p>
                   </InfoBlock>
 
-                  {qwenPanel}
+                  {editPanel}
 
                   {selectedLine.hasError ? (
                     <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/40 space-y-2.5">
@@ -1156,7 +1156,7 @@ export default function App() {
                 </div>
               )}
 
-              {level !== 'beginner' && qwenPanel}
+              {level !== 'beginner' && editPanel}
             </div>
           </section>
         </div>
