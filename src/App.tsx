@@ -46,7 +46,8 @@ const SECONDARY_BTN =
   'py-3 text-sm font-semibold text-[#D5D8E5] bg-[#2A2D40] hover:bg-[#33374D] border border-[#34384F] rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap';
 const PRIMARY_BTN =
   'py-3 text-sm font-bold text-white bg-[#7C6CF6] hover:bg-[#6B5AE8] disabled:opacity-40 disabled:cursor-not-allowed rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap';
-import { buildFallbackAnalysis } from './utils/codeAnalyzer.ts';
+import { buildFallbackAnalysis, isElementaryForAdvanced } from './utils/codeAnalyzer.ts';
+import robotIcon from './assets/robot-icon.png';
 
 // 레벨 아이콘: 막대 3개 중 채워진 개수로 수준 표시 (초급 1칸 · 중급 2칸 · 전공 3칸)
 function LevelBars({ filled, active }: { filled: number; active: boolean }) {
@@ -250,15 +251,16 @@ export default function App() {
   };
 
   // 어렵지 않은 기본 코드라 해석을 건너뛸 줄인지 (중급자·전공자)
-  //  전공자는 기본 코드라도 오류·결함·누락이 있으면 점검 결과를 그대로 보여줌
+  //  - 중급자: 빈 줄·주석·닫는 태그 같은 기본 코드(isBasic) 생략
+  //  - 전공자: 중급자가 생략하는 코드 + 전공자에게 너무 쉬운 코드(제목·문단 태그, 단순 CSS 속성,
+  //            값만 넣는 변수 선언 등)까지 생략 → 중급자보다 기초 코드 해석이 적음
+  //  - 틀린 코드, 오류·보안 결함이 있는 줄은 어느 모드에서도 생략하지 않음
   const isSkippedLine = (line: LineInterpretation) => {
-    if (level === 'beginner' || line.isBlank || !line.intermediate.isBasic || line.hasError) return false;
-    if (level === 'advanced') {
-      const a = line.advanced;
-      if (a.bugAudit?.hasIssue && a.bugAudit.severity !== 'none') return false;
-      if (a.missingAudit?.hasMissing) return false;
-    }
-    return true;
+    if (level === 'beginner' || line.isBlank || line.hasError) return false;
+    const bug = line.advanced.bugAudit;
+    if (bug?.hasIssue && (bug.severity === 'error' || bug.severity === 'security')) return false;
+    if (line.intermediate.isBasic) return true;
+    return level === 'advanced' && isElementaryForAdvanced(line.code);
   };
 
   // 현재 레벨에 맞는 줄 아래 주석 반환
@@ -551,8 +553,9 @@ export default function App() {
           <p className="text-[11px] font-bold tracking-[0.18em] text-[#8B7CFF] uppercase mb-2">
             Your personal code guide
           </p>
-          <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight flex items-center gap-2">
             코드를 입력하면, 이해가 시작돼요.
+            <img src={robotIcon} alt="" aria-hidden="true" className="w-9 h-9 sm:w-11 sm:h-11 shrink-0 select-none" draggable={false} />
           </h1>
           <p className="mt-2 text-sm text-[#9AA0B8]">
             설명 수준을 고르고 코드를 분석해 보세요.
@@ -949,7 +952,9 @@ export default function App() {
                 <div className="px-4 py-3.5 rounded-xl bg-[#232637] border border-dashed border-[#3A3F58] text-xs text-[#9AA0B8] flex items-start gap-2">
                   <MinusCircle className="w-4 h-4 shrink-0 text-[#6E7491]" />
                   <span>
-                    <strong className="text-[#D5D8E5]">기본 코드라서 설명을 생략했어요.</strong>{' '}
+                    <strong className="text-[#D5D8E5]">
+                      {level === 'advanced' ? '전공자에게는 기초 코드라서 설명을 생략했어요.' : '기본 코드라서 설명을 생략했어요.'}
+                    </strong>{' '}
                     {selectedLine.intermediate.howItWorks}
                   </span>
                 </div>

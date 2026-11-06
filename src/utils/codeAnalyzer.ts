@@ -688,6 +688,26 @@ for (const lv of [2, 3, 4, 5, 6]) {
   };
 }
 
+// 전공자에게는 설명할 필요가 없는 아주 쉬운 코드
+//  중급자 모드에서 생략하는 기본 코드(isBasic)에 더해, 전공자 모드에서는 이것까지 생략함
+const ADV_TRIVIAL_TEXT_TAG = /^<(h[1-6]|p|span|strong|em|b|i|u|small|li|title|label)\b[^>]*>[^<]*(<\/\1>)?$/i;
+const ADV_TRIVIAL_CSS_PROP =
+  /^(color|background(-color)?|margin(-[a-z]+)?|padding(-[a-z]+)?|font-(size|weight|family|style)|line-height|letter-spacing|text-(align|decoration|transform)|border(-radius)?|width|height|(max|min)-(width|height)|opacity|gap|cursor)\s*:\s*[^;{}]+;?$/i;
+const ADV_TRIVIAL_LITERAL_DECL =
+  /^(const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(-?\d+(\.\d+)?|'[^']*'|"[^"]*"|`[^`$]*`|true|false|null|\[\]|\{\})\s*;?$/;
+
+export function isElementaryForAdvanced(code: string): boolean {
+  const t = code.trim();
+  if (!t) return true;
+  if (ADV_TRIVIAL_TEXT_TAG.test(t)) return true; // <h1>제목</h1>, <p>문단</p>, <title>…</title>
+  if (/^<(br|hr)\s*\/?>$/i.test(t)) return true; // <br>, <hr>
+  if (/^<meta\s+charset=/i.test(t)) return true; // <meta charset="UTF-8">
+  if (/^<(ul|ol)>$/i.test(t)) return true; // 속성 없는 목록 시작
+  if (ADV_TRIVIAL_CSS_PROP.test(t)) return true; // color: #333; padding: 16px;
+  if (ADV_TRIVIAL_LITERAL_DECL.test(t)) return true; // const count = 0;
+  return false;
+}
+
 export function getLevelDepth(line: string): LevelDepth {
   const trimmed = line.trim();
 
