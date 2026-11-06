@@ -47,7 +47,6 @@ const SECONDARY_BTN =
 const PRIMARY_BTN =
   'py-3 text-sm font-bold text-white bg-[#7C6CF6] hover:bg-[#6B5AE8] disabled:opacity-40 disabled:cursor-not-allowed rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap';
 import { buildFallbackAnalysis } from './utils/codeAnalyzer.ts';
-import CodeEditAssistant from './components/CodeEditAssistant.tsx';
 
 // 레벨 아이콘: 막대 3개 중 채워진 개수로 수준 표시 (초급 1칸 · 중급 2칸 · 전공 3칸)
 function LevelBars({ filled, active }: { filled: number; active: boolean }) {
@@ -83,7 +82,6 @@ export default function App() {
     SAMPLE_PRESETS[0].data
   );
   const [selectedLineNum, setSelectedLineNum] = useState<number>(1);
-  const [rangeEndNum, setRangeEndNum] = useState<number | null>(null); // Shift+클릭으로 고른 범위의 다른 끝
   const [isEditing, setIsEditing] = useState<boolean>(false); // 코드 변경/편집 모드 여부
 
   // ---------- 여러 파일 ----------
@@ -105,7 +103,6 @@ export default function App() {
   const [showExamples, setShowExamples] = useState<boolean>(false); // 예시 코드 메뉴 열림 여부
   const [isDragging, setIsDragging] = useState<boolean>(false); // 파일을 끌어오는 중인지
   const [dropMessage, setDropMessage] = useState<string | null>(null); // 파일 불러오기 안내/오류
-  const [appliedNotice, setAppliedNotice] = useState<string | null>(null); // 수정 적용 후 안내
   const dragDepth = useRef(0);
 
   const errorLines = analysis.lines.filter((l) => l.hasError).map((l) => l.lineNumber);
@@ -113,16 +110,6 @@ export default function App() {
   const selectedLine: LineInterpretation =
     analysis.lines.find((l) => l.lineNumber === selectedLineNum) ||
     analysis.lines[0];
-
-  // 수정 요청에 쓸 줄 범위 (Shift+클릭으로 여러 줄 선택)
-  const rangeStart = Math.min(selectedLine.lineNumber, rangeEndNum ?? selectedLine.lineNumber);
-  const rangeEnd = Math.max(selectedLine.lineNumber, rangeEndNum ?? selectedLine.lineNumber);
-  const analyzedCode = analysis.lines.map((l) => l.code).join('\n');
-
-  // 코드가 바뀌면 범위 선택 해제
-  useEffect(() => {
-    setRangeEndNum(null);
-  }, [analysis]);
 
   // 코드 입력 카드 밖에 파일을 떨어뜨려도 브라우저가 파일을 열어버리지 않도록 막기
   useEffect(() => {
@@ -136,13 +123,6 @@ export default function App() {
       window.removeEventListener('drop', block);
     };
   }, []);
-
-  // 수정 적용 안내는 5초 뒤 사라짐
-  useEffect(() => {
-    if (!appliedNotice) return;
-    const id = window.setTimeout(() => setAppliedNotice(null), 5000);
-    return () => window.clearTimeout(id);
-  }, [appliedNotice]);
 
   // 안내 메시지는 4초 뒤 자동으로 사라짐
   useEffect(() => {
@@ -159,11 +139,9 @@ export default function App() {
       if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setRangeEndNum(null);
         setSelectedLineNum((n) => Math.min(analysis.lines.length, n + 1));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setRangeEndNum(null);
         setSelectedLineNum((n) => Math.max(1, n - 1));
       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         // 여러 파일을 열었을 때 ← → 로 파일 넘기기
@@ -546,22 +524,6 @@ export default function App() {
 
   const levelMeta = LEVELS.find((l) => l.id === level)!;
 
-  // 🤖 Claude: 고른 줄을 요청대로 고치는 방법 (초급자는 "왜 여기서 사용되었나요?" 아래, 나머지는 설명 맨 아래)
-  const editPanel = isEditing ? null : (
-    <CodeEditAssistant
-      code={analyzedCode}
-      startLine={rangeStart}
-      endLine={rangeEnd}
-      fileName={loadedFileName}
-      onApply={(newCode, start) => {
-        setInputCode(newCode);
-        void handleRunAnalysis(newCode);
-        setSelectedLineNum(start);
-        setAppliedNotice(`${start}번째 줄을 바꾼 코드로 고치고, 해석도 새 코드에 맞게 다시 만들었어요.`);
-      }}
-    />
-  );
-
   return (
     <div className="min-h-screen bg-[#181A24] text-[#E6E8F0] flex flex-col font-sans selection:bg-[#7C6CF6] selection:text-white">
       {/* 1. 상단 헤더 */}
@@ -748,8 +710,6 @@ export default function App() {
                     <div className="min-w-full w-max py-2">
                     {analysis.lines.map((line) => {
                       const isSelected = line.lineNumber === selectedLine.lineNumber;
-                      const isInRange =
-                        !isSelected && line.lineNumber >= rangeStart && line.lineNumber <= rangeEnd;
                       const subComment = getSubCommentByLevel(line);
                       const isLineError = Boolean(line.hasError);
                       const isDimmed = isSkippedLine(line) && !isSelected;
@@ -758,15 +718,7 @@ export default function App() {
                         <div
                           key={line.lineNumber}
                           id={`code-line-${line.lineNumber}`}
-                          onClick={(e) => {
-                            if (e.shiftKey) {
-                              window.getSelection()?.removeAllRanges();
-                              setRangeEndNum(line.lineNumber === selectedLine.lineNumber ? null : line.lineNumber);
-                            } else {
-                              setSelectedLineNum(line.lineNumber);
-                              setRangeEndNum(null);
-                            }
-                          }}
+                          onClick={() => setSelectedLineNum(line.lineNumber)}
                           className={`w-full py-1.5 pr-3 cursor-pointer flex flex-col gap-0.5 border-l-2 transition-colors ${isDimmed ? 'opacity-40 ' : ''}${
                             isLineError
                               ? isSelected
@@ -774,8 +726,6 @@ export default function App() {
                                 : 'bg-red-500/5 border-red-500/50 hover:bg-red-500/10'
                               : isSelected
                               ? 'bg-[#7C6CF6]/15 border-[#8B7CFF]'
-                              : isInRange
-                              ? 'bg-[#7C6CF6]/10 border-[#8B7CFF]/50'
                               : 'border-transparent hover:bg-white/[0.03]'
                           }`}
                         >
@@ -863,13 +813,6 @@ export default function App() {
             </div>
 
             <div className="code-scroll p-4 sm:p-5 space-y-4 max-h-[calc(100vh-10rem)] overflow-y-auto">
-              {appliedNotice && (
-                <div className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  {appliedNotice}
-                </div>
-              )}
-
               {/* 선택된 줄 카드 */}
               <div className="p-4 rounded-xl bg-[#232637] border border-[#30344A] space-y-3">
                 <div className="flex items-center justify-between gap-2">
@@ -945,8 +888,6 @@ export default function App() {
                       {selectedLine.beginner.whyUsedHere}
                     </p>
                   </InfoBlock>
-
-                  {editPanel}
 
                   {selectedLine.hasError ? (
                     <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/40 space-y-2.5">
@@ -1155,8 +1096,6 @@ export default function App() {
                   )}
                 </div>
               )}
-
-              {level !== 'beginner' && editPanel}
             </div>
           </section>
         </div>

@@ -10,7 +10,6 @@ import {
   interpretSingleLineFallback,
 } from './src/utils/codeAnalyzer.ts';
 import { LineInterpretation, SimpleCodeAnalysis } from './src/types.ts';
-import { EditAssistantError, suggestEdit } from './codeEditAssistant.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,33 +34,6 @@ async function startServer() {
   // Cloud Run / Kubernetes 헬스체크 엔드포인트
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
-  });
-
-  // Claude: 고른 줄을 사용자 요청대로 고치는 방법 안내 ("이렇게 바꾸고 싶어요")
-  app.post('/api/edit-suggest', async (req, res) => {
-    const { code, startLine, endLine, request, fileName } = req.body ?? {};
-    if (typeof code !== 'string' || typeof request !== 'string' || !request.trim()) {
-      return res.status(400).json({ error: '코드와 요청 내용을 보내주세요.' });
-    }
-    if (!Number.isFinite(startLine) || !Number.isFinite(endLine)) {
-      return res.status(400).json({ error: '줄 번호가 올바르지 않아요.' });
-    }
-    try {
-      const result = await suggestEdit({
-        code,
-        startLine,
-        endLine,
-        request: request.trim().slice(0, 500),
-        fileName: typeof fileName === 'string' ? fileName : undefined,
-      });
-      res.json(result);
-    } catch (err) {
-      if (err instanceof EditAssistantError) {
-        return res.status(err.status).json({ error: err.message });
-      }
-      console.error('[edit-suggest] failed:', err);
-      res.status(500).json({ error: '코드 수정 방법을 만드는 중 오류가 났어요.' });
-    }
   });
 
   app.post('/api/analyze-code', async (req, res) => {
