@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<title>코드메이트 AI | 나에게 맞는 코드 설명</title>
+<style>
+:root{--bg:#f5f7fb;--panel:#fff;--ink:#20263a;--muted:#7b8499;--line:#e7eaf2;--purple:#7567e8;--purple2:#eeeaff;--green:#1b9a75;--sum:#f7f6ff;--sumline:#ece9ff;--codebg:#f6f7fa;--codeink:#48516a;--btn2:#f0f1f7;--editor:#171a28;--warn:#fff8e9;--warnink:#8b6726;--tagbg:#e8f7f1;--tagink:#168261;--accent:#5f51cf;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#12141d;--panel:#1b1e2b;--ink:#e6e9f5;--muted:#97a0b5;--line:#2c3042;--purple2:#2a2650;--sum:#221f3f;--sumline:#34306a;--codebg:#252a3b;--codeink:#c9d0e6;--btn2:#2a2e40;--editor:#0e1019;--warn:#33291a;--warnink:#e7c37a;--tagbg:#17352c;--tagink:#58d3a8;--accent:#a99fff}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#12141d;--panel:#1b1e2b;--ink:#e6e9f5;--muted:#97a0b5;--line:#2c3042;--purple2:#2a2650;--sum:#221f3f;--sumline:#34306a;--codebg:#252a3b;--codeink:#c9d0e6;--btn2:#2a2e40;--editor:#0e1019;--warn:#33291a;--warnink:#e7c37a;--tagbg:#17352c;--tagink:#58d3a8;--accent:#a99fff}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,"Noto Sans KR",Arial,sans-serif}
+.i{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.125em;flex:none}
+header{height:70px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 5%}
+.logo{font-size:21px;font-weight:850;letter-spacing:-.8px;display:flex;align-items:center;gap:6px}.logo span{color:var(--purple)}.logo .i{color:var(--purple);font-size:18px}.logo em{font-style:normal;font-size:11px;background:var(--purple);color:#fff;border-radius:20px;padding:2px 8px;letter-spacing:0}.topnote{font-size:12px;color:var(--muted)}
+main{max-width:1380px;margin:32px auto;padding:0 24px}.intro{margin-bottom:24px}.eyebrow{font-size:12px;font-weight:800;color:var(--purple);letter-spacing:1.5px}.intro h1{font-size:30px;margin:8px 0}.intro p{color:var(--muted);margin:0;font-size:14px}
+.layout{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:18px;align-items:stretch}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;overflow:hidden}
+.panel-head{padding:18px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.panel-head h2{font-size:15px;margin:0;display:flex;align-items:center;gap:8px}.panel-head h2 .i{color:var(--purple);font-size:17px}.hint{font-size:11px;color:var(--muted)}
+.editor-wrap{padding:16px 18px}.toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.toolbar label,.toolbar .lbl{font-size:12px;font-weight:700}.toolbar select{border:1px solid var(--line);border-radius:8px;padding:7px 10px;color:var(--ink);background:var(--panel)}
+.drop-zone{display:flex;align-items:center;gap:12px;padding:13px 15px;margin-bottom:11px;border:1.5px dashed var(--purple);border-radius:11px;background:var(--sum);cursor:pointer}
+.drop-zone:hover,.drop-zone.dragover{background:var(--purple2)}
+.drop-icon{width:38px;height:38px;border-radius:10px;background:var(--purple2);color:var(--purple);display:grid;place-items:center;font-size:19px}.drop-zone strong{display:block;font-size:12px}.drop-zone span{display:block;margin-top:4px;font-size:10px;color:var(--muted)}
+.file-status{min-height:16px;margin-top:6px;font-size:11px;color:var(--green)}
+textarea{width:100%;height:430px;resize:vertical;border:1px solid var(--line);border-radius:12px;background:var(--editor);color:#e6e9f5;padding:18px;font:13px/1.75 Consolas,monospace;outline:none;tab-size:4}textarea:focus{border-color:var(--purple)}
+#viewer{height:430px;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--editor);color:#e6e9f5;padding:10px 0;font:13px/1.75 Consolas,monospace;tab-size:4}
+.ln{display:flex;gap:14px;padding:0 16px 0 0;white-space:pre;border-left:3px solid transparent;min-width:max-content;width:100%}.ln .n{width:44px;text-align:right;color:#6d758c;flex:none;user-select:none}
+.ln:not(.blank){cursor:pointer}.ln:not(.blank):hover{background:#ffffff12}.ln.sel{background:#7567e83a;border-left-color:var(--purple)}.ln.sel .n{color:#c9c3ff}.ln:focus-visible{outline:2px solid var(--purple);outline-offset:-2px}
+.vhint{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-top:11px}.vhint .i{color:var(--purple)}
+.actions{display:flex;gap:9px;margin-top:13px}.btn{border:0;border-radius:10px;padding:11px 16px;font-weight:750;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;justify-content:center;gap:7px;font-family:inherit}.primary{background:var(--purple);color:#fff;flex:1}.secondary{background:var(--btn2);color:var(--muted)}.btn:disabled{opacity:.6;cursor:wait}
+[data-mode="view"] .e-only,[data-mode="edit"] .v-only{display:none!important}
+.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;padding:16px 18px 4px}.level{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:12px 8px;text-align:center;cursor:pointer;color:var(--ink);font:inherit}.level:hover{border-color:var(--purple)}.level .ico{display:block;margin:0 auto 6px;font-size:22px;color:var(--muted)}.level strong{display:block;font-size:12px}.level small{font-size:10px;color:var(--muted)}.level.active{border:1.5px solid var(--purple);background:var(--purple2)}.level.active .ico{color:var(--purple)}
+.output{padding:18px;min-height:510px}.empty{height:450px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--muted)}.bigic{width:64px;height:64px;border-radius:50%;background:var(--purple2);color:var(--purple);display:grid;place-items:center;font-size:28px;margin-bottom:14px}.empty strong{color:var(--ink);font-size:15px}.empty p{font-size:12px;line-height:1.7;max-width:270px}
+.spin{width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--purple);border-radius:50%;animation:s .8s linear infinite;margin-bottom:14px}@keyframes s{to{transform:rotate(360deg)}}
+.summary{padding:13px 14px;background:var(--sum);border:1px solid var(--sumline);border-radius:12px;margin-bottom:14px}.summary b{font-size:12px;color:var(--accent)}.summary p{font-size:13px;line-height:1.7;margin:6px 0 0}
+.card{border:1px solid var(--line);border-radius:14px;padding:16px}.card-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}.badge{font:700 11px Consolas,monospace;color:var(--accent);background:var(--purple2);border-radius:20px;padding:3px 9px}.tag{display:inline-block;font-size:11px;font-weight:700;color:var(--tagink);background:var(--tagbg);padding:3px 8px;border-radius:20px}
+.card code{display:block;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--codebg);border-radius:8px;padding:9px 11px;font:12px/1.6 Consolas,monospace;color:var(--codeink)}.card p{font-size:14px;line-height:1.8;margin:12px 0 0}
+.link{margin-top:14px;background:none;border:0;color:var(--accent);font:600 12px inherit;font-family:inherit;cursor:pointer;padding:0;display:inline-flex;align-items:center;gap:5px}
+.tips{margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--sum);border:1px solid var(--sumline);font-size:12px;line-height:1.7}.tips b{color:var(--accent);display:flex;align-items:center;gap:6px}.tips ul{margin:6px 0 0;padding-left:18px}
+.foot{margin:16px 2px;color:var(--muted);font-size:11px;line-height:1.6}.notice{margin-top:14px;padding:11px 13px;border-radius:10px;background:var(--warn);color:var(--warnink);font-size:11px;line-height:1.6}
+@media(max-width:850px){.layout{grid-template-columns:1fr}.output{min-height:300px}.empty{height:260px}textarea,#viewer{height:330px}header{padding:0 20px}.topnote{display:none}}
+@media(max-width:480px){main{padding:0 13px;margin:22px auto}.intro h1{font-size:24px}.levels{gap:6px;padding-left:12px;padding-right:12px}.level small{font-size:9px}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-code" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></symbol>
+<symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></symbol>
+<symbol id="i-sprout" viewBox="0 0 24 24"><path d="M7 20h10"/><path d="M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2.2 2.3 3.7-2 .4-3.5.4-4.8-.3-1.2-.6-2.3-1.9-3-4.2 2.8-.5 4.4 0 5.5.8z"/><path d="M14.1 6a7 7 0 0 0-1.1 4c1.9-.1 3.3-.6 4.3-1.4 1-1 1.6-2.3 1.7-4.6-2.7.1-4 1-4.9 2z"/></symbol>
+<symbol id="i-rocket" viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></symbol>
+<symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/></symbol>
+<symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></symbol>
+<symbol id="i-pointer" viewBox="0 0 24 24"><path d="m9 9 5 12 1.8-5.2L21 14Z"/><path d="M7.2 2.2 8 5.1"/><path d="m5.1 8-2.9-.8"/><path d="M14 4.1 12 6"/><path d="m6 12-1.9 2"/></symbol>
+<symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8M16 17H8M10 9H8"/></symbol>
+<symbol id="i-bulb" viewBox="0 0 24 24"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+<symbol id="i-lv1" viewBox="0 0 24 24"><rect x="3" y="15" width="4.5" height="6" rx="1.5" fill="currentColor" stroke="none"/><rect x="9.75" y="10" width="4.5" height="11" rx="1.5" fill="currentColor" stroke="none" opacity=".25"/><rect x="16.5" y="4" width="4.5" height="17" rx="1.5" fill="currentColor" stroke="none" opacity=".25"/></symbol>
+<symbol id="i-lv2" viewBox="0 0 24 24"><rect x="3" y="15" width="4.5" height="6" rx="1.5" fill="currentColor" stroke="none"/><rect x="9.75" y="10" width="4.5" height="11" rx="1.5" fill="currentColor" stroke="none"/><rect x="16.5" y="4" width="4.5" height="17" rx="1.5" fill="currentColor" stroke="none" opacity=".25"/></symbol>
+<symbol id="i-lv3" viewBox="0 0 24 24"><rect x="3" y="15" width="4.5" height="6" rx="1.5" fill="currentColor" stroke="none"/><rect x="9.75" y="10" width="4.5" height="11" rx="1.5" fill="currentColor" stroke="none"/><rect x="16.5" y="4" width="4.5" height="17" rx="1.5" fill="currentColor" stroke="none"/></symbol>
+</defs></svg>
+<header><div class="logo"><svg class="i"><use href="#i-spark"/></svg>code<span>mate</span><em>AI</em></div><div class="topnote">Claude가 내 수준에 맞춰 설명해 드려요</div></header>
+<main>
+  <section class="intro"><div class="eyebrow">YOUR PERSONAL CODE GUIDE</div><h1>코드를 입력하면, 이해가 시작돼요.</h1><p>설명 수준을 고르고 코드를 분석해 보세요.</p></section>
+  <section class="layout">
+    <div class="panel">
+      <div class="panel-head"><h2><svg class="i"><use href="#i-code"/></svg>코드 입력</h2><span class="hint">모든 프로그래밍 언어 지원</span></div>
+      <div class="levels" role="group" aria-label="설명 수준 선택">
+        <button class="level active" data-level="beginner" aria-pressed="true"><svg class="i ico"><use href="#i-lv1"/></svg><strong>초급자</strong><small>용어부터 쉽게</small></button>
+        <button class="level" data-level="intermediate" aria-pressed="false"><svg class="i ico"><use href="#i-lv2"/></svg><strong>중급자</strong><small>작동 원리 중심</small></button>
+        <button class="level" data-level="expert" aria-pressed="false"><svg class="i ico"><use href="#i-lv3"/></svg><strong>전문가</strong><small>구조와 기술 관점</small></button>
+      </div>
+      <div class="editor-wrap" id="wrap" data-mode="edit">
+        <div class="toolbar"><label class="e-only" for="code">코드를 여기에 붙여넣으세요</label><span class="lbl v-only">궁금한 줄을 눌러보세요</span><select id="language"><option value="auto">언어 자동 감지</option><option>HTML</option><option>CSS</option><option>JavaScript</option><option>Python</option></select></div>
+        <div id="dropZone" class="drop-zone e-only" tabindex="0" role="button" aria-label="코드 파일 선택">
+          <div class="drop-icon"><svg class="i"><use href="#i-upload"/></svg></div>
+          <div><strong>코드 파일을 여기로 끌어다 놓으세요</strong><span>또는 클릭해서 파일 선택</span></div>
+          <input id="fileInput" type="file" accept=".html,.htm,.css,.js,.mjs,.cjs,.py,.txt,.json,.java,.c,.cpp,.cs,.php,.rb,.go,.ts,.tsx,.jsx,.sql" hidden>
+        </div>
+        <textarea id="code" class="e-only" spellcheck="false" aria-label="분석할 코드 입력" placeholder="// 예시 코드를 입력해 보세요&#10;let userName = &quot;코드메이트&quot;;&#10;console.log(userName);"></textarea>
+        <div id="viewer" class="v-only" role="group" aria-label="코드 줄 선택"></div>
+        <div id="fileStatus" class="file-status e-only" aria-live="polite"></div>
+        <div class="vhint v-only"><svg class="i"><use href="#i-pointer"/></svg>줄을 누르면 오른쪽에 그 줄의 설명이 나와요. 방향키(↑↓)로도 이동할 수 있어요.</div>
+        <div class="actions">
+          <button class="btn secondary e-only" id="sample"><svg class="i"><use href="#i-file"/></svg>예시 코드</button>
+          <button class="btn secondary e-only" id="clear"><svg class="i"><use href="#i-trash"/></svg>지우기</button>
+          <button class="btn primary e-only" id="analyze"><svg class="i"><use href="#i-spark"/></svg>코드 분석 시작</button>
+          <button class="btn secondary v-only" id="edit" style="flex:1"><svg class="i"><use href="#i-edit"/></svg>코드 수정하기</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2><svg class="i"><use href="#i-spark"/></svg>맞춤 코드 설명</h2><span class="hint" id="levelLabel">초급자 모드</span></div>
+      <div class="output" id="output" aria-live="polite"></div>
+    </div>
+  </section>
+  <p class="foot">AI 분석은 최대 250줄까지 처리하며, AI가 만든 설명은 틀릴 수 있으니 중요한 코드는 직접 실행해 확인해 보세요.</p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const codeEl=$('code'),output=$('output'),languageEl=$('language'),viewer=$('viewer'),wrap=$('wrap'),fileStatus=$('fileStatus');
+const ic=(n,c='')=>`<svg class="i ${c}"><use href="#i-${n}"/></svg>`;
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const LEVELS={
+ beginner:{name:'초급자 모드',
+  guide:'독자는 프로그래밍을 전혀 모르는 비전공자입니다. 반드시 지킬 것:\n- 이 줄/코드가 "무엇인지(정의)"를 중심으로 설명하세요. 예: "변수는 값을 담아두는 상자예요".\n- 전문 용어(변수, 함수, 배열, 반환 등)가 나오면 처음 한 번은 일상 비유(상자, 레시피, 자판기 등)로 풀어 주세요.\n- 영어 약어나 어려운 한자어는 쓰지 말고, 짧고 부드러운 "~예요/~해요" 말투로 쓰세요.\n- 실행 원리나 내부 동작은 깊이 다루지 마세요.',
+  fmt:'desc는 2~3문장: 첫 문장은 "이게 무엇인지" 정의, 다음은 쉬운 비유나 예시.',
+  ovfmt:'전체 코드가 무엇을 하는 코드인지 비유를 들어 쉬운 말로 2~3문장'},
+ intermediate:{name:'중급자 모드',
+  guide:'독자는 변수·조건문·반복문·함수 같은 기본 문법은 아는 학습자입니다. 반드시 지킬 것:\n- 단순한 기본 문법(변수 선언, 출력, 주석, 닫는 괄호 등)은 정의를 설명하지 말고 "기본 문법이라 생략" 수준으로 한 문장만 쓰세요.\n- 정의 대신 "어떻게 작동하는지"를 설명하세요: 실행 순서, 값이 어떻게 변하고 전달되는지, 이 줄의 결과가 다음 줄에서 어떻게 쓰이는지.\n- 필요하면 이 줄 실행 후의 값을 예로 보여 주세요(예: subtotal = 24000).\n- 용어는 쓰되 꼭 필요한 것만 짧게 덧붙이세요.',
+  fmt:'desc는 1~3문장: 작동 원리와 실행 흐름 중심. 기본 문법이면 한 문장으로 짧게.',
+  ovfmt:'전체 코드의 실행 흐름(어떤 순서로 무엇이 동작하는지)을 2~3문장'},
+ expert:{name:'전문가 모드',
+  guide:'독자는 숙련된 개발자입니다. 반드시 지킬 것:\n- 기초 정의나 비유는 쓰지 말고, IT 전문 용어를 정확하게 사용하세요(스코프, 클로저, 호이스팅, 비동기/이벤트 루프, 시간·공간 복잡도, 불변성, 부수효과, 멱등성, 메모이제이션, 레이스 컨디션, 접근성 등 해당되는 것).\n- 설계 의도와 패턴, 엣지 케이스, 잠재적 버그, 성능·보안·유지보수 관점의 트레이드오프, 개선안을 담으세요.\n- 간결한 개조식에 가까운 기술 문서 문체("~함", "~임", "~됨" 또는 "~한다")로 쓰세요.',
+  fmt:'desc는 2~4문장: 설계 의도 + 기술적 동작 + 엣지 케이스/개선점 중 해당되는 것.',
+  ovfmt:'전체 코드의 구조·설계 패턴과 기술적 특징을 전문 용어로 2~3문장'}
+};
+let level='beginner',autoDetect=true,samplePromise=null;
+let lines=[],lang='',cut=false,cur='ov',tok=0,timer=null;const cache=new Map();
+const emptyView=(icon,t,p)=>`<div class="empty"><div class="bigic">${ic(icon)}</div><strong>${t}</strong><p>${p}</p></div>`;
+const loading=t=>{output.innerHTML=`<div class="empty"><div class="spin"></div><strong>${t}</strong><p>잠시만 기다려 주세요.</p></div>`};
+const idle=()=>{output.innerHTML=emptyView('pointer','설명이 여기에 표시돼요','왼쪽에 코드를 넣고 “코드 분석 시작”을 누른 뒤, 궁금한 줄을 눌러보세요.')};
+idle();
+
+document.querySelectorAll('.level').forEach(b=>b.onclick=()=>{
+ level=b.dataset.level;
+ document.querySelectorAll('.level').forEach(x=>{const on=x===b;x.classList.toggle('active',on);x.setAttribute('aria-pressed',on)});
+ $('levelLabel').textContent=LEVELS[level].name;
+ if(wrap.dataset.mode==='view')cur==='ov'?showOverview():explainLine(cur);
+});
+
+function detect(c){
+ if(/<\/?[a-z][\s\S]*?>/i.test(c))return 'HTML';
+ if(/[.#][\w-]+\s*\{/.test(c))return 'CSS';
+ if(/\b(def|print|elif)\b/.test(c)||/:\s*$/m.test(c))return 'Python';
+ return 'JavaScript';
+}
+codeEl.addEventListener('input',()=>{if(autoDetect){const c=codeEl.value.trim();languageEl.value=c?detect(c):'auto'}});
+languageEl.addEventListener('change',()=>{autoDetect=languageEl.value==='auto'});
+codeEl.addEventListener('keydown',e=>{if(e.key==='Tab'&&!e.shiftKey){e.preventDefault();codeEl.setRangeText('    ',codeEl.selectionStart,codeEl.selectionEnd,'end')}});
+
+const dz=$('dropZone'),fi=$('fileInput');
+dz.onclick=()=>fi.click();
+dz.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fi.click()}};
+['dragenter','dragover'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.add('dragover')}));
+['dragleave','drop'].forEach(t=>dz.addEventListener(t,e=>{e.preventDefault();dz.classList.remove('dragover')}));
+dz.addEventListener('drop',e=>loadFile(e.dataTransfer.files[0]));
+fi.onchange=e=>loadFile(e.target.files[0]);
+function loadFile(f){
+ if(!f)return;
+ const r=new FileReader();
+ r.onload=()=>{codeEl.value=String(r.result||'');fileStatus.textContent='✓ '+f.name+' 파일을 불러왔어요.';fileStatus.style.color='var(--green)';
+  const m={html:'HTML',htm:'HTML',css:'CSS',js:'JavaScript',mjs:'JavaScript',py:'Python'}[f.name.split('.').pop().toLowerCase()];
+  if(m){languageEl.value=m;autoDetect=false}else{autoDetect=true;languageEl.value=detect(codeEl.value)}};
+ r.onerror=()=>{fileStatus.textContent='파일을 읽지 못했어요.';fileStatus.style.color='#b45309'};
+ r.readAsText(f,'UTF-8');
+}
+const SAMPLES={
+ "JavaScript": {
+  "beginner": "// 상품 가격과 수량으로 할인된 결제 금액을 계산해요.\nconst price = 12000;\nconst quantity = 2;\nconst discountRate = 0.1;\n\nfunction calculateTotal(price, quantity, discountRate) {\n    const subtotal = price * quantity;\n    return subtotal * (1 - discountRate);\n}\n\nconst total = calculateTotal(price, quantity, discountRate);\nconsole.log(\"결제 금액: \" + total + \"원\");",
+  "intermediate": "// 장바구니에서 재고가 있는 상품만 골라 합계를 계산해요.\nconst cart = [\n    { name: \"키보드\", price: 45000, inStock: true },\n    { name: \"마우스\", price: 22000, inStock: false },\n    { name: \"모니터\", price: 210000, inStock: true }\n];\n\nconst available = cart.filter(item => item.inStock);\nconst total = available.reduce((sum, item) => sum + item.price, 0);\nconst names = available.map(item => item.name).join(\", \");\n\nconsole.log(`${names} 합계: ${total.toLocaleString()}원`);",
+  "expert": "// 지수 백오프로 실패한 요청을 재시도하는 fetch 래퍼\nasync function fetchWithRetry(url, { retries = 3, baseDelay = 300, signal } = {}) {\n    for (let attempt = 0; attempt <= retries; attempt++) {\n        try {\n            const res = await fetch(url, { signal });\n            if (!res.ok) throw new Error(`HTTP ${res.status}`);\n            return await res.json();\n        } catch (err) {\n            if (signal?.aborted || attempt === retries) throw err;\n            const delay = baseDelay * 2 ** attempt;\n            await new Promise(resolve => setTimeout(resolve, delay));\n        }\n    }\n}\n\nconst controller = new AbortController();\n\nfetchWithRetry(\"/api/orders\", { signal: controller.signal })\n    .then(orders => console.log(`주문 ${orders.length}건`))\n    .catch(err => console.error(\"요청 실패:\", err.message));"
+ },
+ "Python": {
+  "beginner": "# 상품 가격과 수량으로 할인된 결제 금액을 계산해요.\nprice = 12000\nquantity = 2\ndiscount_rate = 0.1\n\ndef calculate_total(price, quantity, discount_rate):\n    subtotal = price * quantity\n    return subtotal * (1 - discount_rate)\n\ntotal = calculate_total(price, quantity, discount_rate)\nprint(f\"결제 금액: {total:.0f}원\")",
+  "intermediate": "# 학생 성적을 관리하는 간단한 클래스\nclass Gradebook:\n    def __init__(self):\n        self.scores = {}\n\n    def add(self, name, score):\n        self.scores[name] = score\n\n    def average(self):\n        return sum(self.scores.values()) / len(self.scores)\n\n    def top_students(self, cutoff=90):\n        return [n for n, s in self.scores.items() if s >= cutoff]\n\nbook = Gradebook()\nbook.add(\"민수\", 92)\nbook.add(\"지연\", 85)\nprint(\"평균:\", book.average())\nprint(\"우수 학생:\", book.top_students())",
+  "expert": "from dataclasses import dataclass\nfrom functools import lru_cache\n\n# 주문 한 건을 나타내는 불변 데이터 클래스\n@dataclass(frozen=True)\nclass Order:\n    id: int\n    price: int\n    quantity: int\n\n    @property\n    def total(self) -> int:\n        return self.price * self.quantity\n\n# 회원 등급별 할인율 (같은 등급은 캐시된 결과를 재사용)\n@lru_cache(maxsize=128)\ndef discount_rate(grade: str) -> float:\n    rates = {\"VIP\": 0.15, \"GOLD\": 0.10}\n    return rates.get(grade, 0.0)\n\ndef checkout(orders: list[Order], grade: str) -> int:\n    subtotal = sum(o.total for o in orders)\n    return round(subtotal * (1 - discount_rate(grade)))\n\norders = [Order(1, 12000, 2), Order(2, 8500, 1)]\nprint(f\"결제 금액: {checkout(orders, 'VIP'):,}원\")"
+ },
+ "HTML": {
+  "beginner": "<!DOCTYPE html>\n<html lang=\"ko\">\n<head>\n    <meta charset=\"UTF-8\">\n    <title>나의 소개</title>\n</head>\n<body>\n    <h1>안녕하세요!</h1>\n    <p>저는 웹 개발을 배우고 있어요.</p>\n    <button>더 알아보기</button>\n</body>\n</html>",
+  "intermediate": "<!DOCTYPE html>\n<html lang=\"ko\">\n<head>\n    <meta charset=\"UTF-8\">\n    <title>여행 블로그</title>\n    <link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n    <header>\n        <nav>\n            <a href=\"/\">홈</a>\n            <a href=\"/posts\">글 목록</a>\n        </nav>\n    </header>\n    <article>\n        <h1>제주도 3일 여행</h1>\n        <img src=\"jeju.jpg\" alt=\"제주 해안 도로\">\n        <p>첫째 날은 해안 도로를 따라 달렸어요.</p>\n    </article>\n    <script src=\"app.js\"><\/script>\n</body>\n</html>",
+  "expert": "<!DOCTYPE html>\n<html lang=\"ko\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n    <title>뉴스레터 구독</title>\n</head>\n<body>\n    <main>\n        <h1>뉴스레터 구독</h1>\n        <form action=\"/subscribe\" method=\"post\">\n            <label for=\"email\">이메일</label>\n            <input id=\"email\" name=\"email\" type=\"email\" required autocomplete=\"email\">\n            <button type=\"submit\">구독하기</button>\n        </form>\n    </main>\n</body>\n</html>"
+ },
+ "CSS": {
+  "beginner": "/* 소개 카드의 모양을 꾸며요 */\n.card {\n    width: 280px;\n    padding: 24px;\n    background-color: #f2f5ff;\n    border-radius: 16px;\n}\n\n.card h2 {\n    color: #5145cd;\n    margin-bottom: 8px;\n}",
+  "intermediate": "/* 가로 메뉴를 만들고 마우스를 올리면 색이 바뀌어요 */\n.nav {\n    display: flex;\n    justify-content: space-between;\n    align-items: center;\n    padding: 12px 24px;\n    background-color: #20263a;\n}\n\n.nav a {\n    color: #ffffff;\n    text-decoration: none;\n    margin-left: 16px;\n}\n\n.nav a:hover {\n    color: #a99fff;\n}",
+  "expert": ":root {\n    --brand: #5145cd;\n    --gap: 16px;\n}\n\n.card-grid {\n    display: grid;\n    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));\n    gap: var(--gap);\n}\n\n.card {\n    padding: calc(var(--gap) * 1.5);\n    border-radius: 16px;\n    background: color-mix(in srgb, var(--brand) 8%, white);\n    transition: transform 0.2s ease;\n}\n\n.card:hover {\n    transform: translateY(-4px);\n}\n\n@media (prefers-reduced-motion: reduce) {\n    .card {\n        transition: none;\n    }\n}"
+ }
+};
+$('sample').onclick=()=>{const l=languageEl.value==='auto'?'JavaScript':languageEl.value;languageEl.value=l;autoDetect=false;codeEl.value=SAMPLES[l][level]};
+$('clear').onclick=()=>{codeEl.value='';autoDetect=true;languageEl.value='auto';fileStatus.textContent='';idle()};
+$('edit').onclick=()=>{tok++;clearTimeout(timer);wrap.dataset.mode='edit';idle()};
+
+// 서버(/api/ai)를 통해 Claude를 호출한다. 서버에 API 키가 없으면 null → 기본 규칙 모드
+function getSample(){
+ if(!samplePromise)samplePromise=fetch('/api/ai',{method:'HEAD'}).then(()=>({
+  async json(prompt,{modelTier='default'}={}){
+   const r=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,tier:modelTier})});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok)throw{code:d.code||'bad'};
+   return d;
+  }
+ })).catch(()=>null);
+ return samplePromise;
+}
+const numbered=()=>lines.map((l,i)=>(i+1)+': '+l).join('\n');
+
+// 분석 시작: 코드 뷰어로 전환
+$('analyze').onclick=()=>{
+ const code=codeEl.value;
+ if(!code.trim()){output.innerHTML=emptyView('code','먼저 코드를 입력해 주세요','짧은 코드부터 입력해도 괜찮아요.');return}
+ lang=languageEl.value==='auto'?detect(code):languageEl.value;
+ lines=code.replace(/\r/g,'').split('\n');cut=lines.length>250;if(cut)lines=lines.slice(0,250);
+ cache.clear();cur='ov';
+ viewer.innerHTML=lines.map((l,i)=>{const ok=l.trim();return `<div class="ln${ok?'':' blank'}" data-n="${i+1}"${ok?' tabindex="0" role="button"':''}><span class="n">${i+1}</span><span class="t">${esc(l)||' '}</span></div>`}).join('');
+ viewer.scrollTop=0;wrap.dataset.mode='view';
+ showOverview();
+};
+
+function mark(n){viewer.querySelector('.sel')?.classList.remove('sel');const el=viewer.querySelector(`[data-n="${n}"]`);if(el){el.classList.add('sel');}return el}
+function pick(n,delay){
+ mark(n);clearTimeout(timer);cur=n;
+ timer=setTimeout(()=>explainLine(n),delay);
+ if(matchMedia('(max-width:850px)').matches)output.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+viewer.addEventListener('click',e=>{const l=e.target.closest('.ln:not(.blank)');if(l)pick(+l.dataset.n,0)});
+viewer.addEventListener('keydown',e=>{
+ const l=e.target.closest('.ln:not(.blank)');if(!l)return;
+ if(e.key==='Enter'||e.key===' '){e.preventDefault();pick(+l.dataset.n,0);return}
+ if(e.key!=='ArrowDown'&&e.key!=='ArrowUp')return;
+ e.preventDefault();
+ let n=+l.dataset.n,d=e.key==='ArrowDown'?1:-1;
+ do{n+=d}while(n>=1&&n<=lines.length&&!lines[n-1].trim());
+ const t=viewer.querySelector(`[data-n="${n}"]`);if(t){t.focus();pick(n,350)}
+});
+
+const msg=(icon,t,p)=>{output.innerHTML=emptyView(icon,t,p)};
+const aiErr=(e,retry)=>{
+ if(e&&e.code==='rate_limited')msg('clock','요청이 너무 많아요','잠시 후 다시 시도해 주세요.');
+ else msg('alert','설명을 만들지 못했어요','같은 줄을 다시 눌러 보세요.');
+};
+
+async function showOverview(){
+ cur='ov';viewer.querySelector('.sel')?.classList.remove('sel');
+ const key='ov:'+level,my=++tok;
+ if(cache.has(key))return renderOverview(cache.get(key));
+ loading('전체 코드를 훑어보는 중');
+ let res;
+ try{
+  const s=await getSample();
+  if(!s)throw{code:'not_granted'};
+  res=await s.json(`당신은 친절한 코드 선생님입니다. 아래 ${lang} 코드를 한국어로 요약하세요.\n설명 수준: ${LEVELS[level].guide}\n오직 JSON만 출력: {"overview":"${LEVELS[level].ovfmt}","tips":["이 수준에 맞는 더 알아볼 점이나 주의점 0~3개"]}\n\n코드:\n${numbered()}`,{modelTier:'default',cache:false});
+  if(!res||!res.overview)throw{code:'bad'};
+  res.mode='ai';
+ }catch(e){
+  if(my!==tok)return;
+  if(e&&e.code==='not_granted')res={overview:lang+' 코드예요. AI 분석은 Claude 환경에서만 동작해요. 지금은 기본 규칙으로 줄별 설명을 보여드려요.',tips:[],mode:'basic'};
+  else return aiErr(e);
+ }
+ if(my!==tok)return;
+ cache.set(key,res);renderOverview(res);
+}
+function renderOverview(r){
+ if(cur!=='ov')return;
+ output.innerHTML=`<div class="summary"><b>${LEVELS[level].name} · ${esc(lang)}</b><p>${esc(r.overview)}</p></div>`
+ +((r.tips||[]).length?`<div class="tips"><b>${ic('bulb')}더 알아보기</b><ul>${r.tips.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>`:'')
+ +(cut?'<div class="notice">코드가 길어 앞의 250줄만 분석했어요.</div>':'')
+ +`<div class="vhint" style="margin-top:20px">${ic('pointer')}왼쪽 코드에서 궁금한 줄을 눌러보세요.</div>`;
+}
+
+const RULES=[[/^\s*(\/\/|#|\/\*)/,'주석','사람이 읽기 쉽게 남기는 메모예요. 실행에는 영향이 없어요.'],[/<!DOCTYPE|<html|<head|<body/i,'문서 구조','HTML 문서의 뼈대를 이루는 태그예요.'],[/<[a-z][\w-]*/i,'HTML 요소','화면에 보이는 내용을 만드는 태그예요.'],[/^\s*(const|let|var)\s/,'변수 선언','값을 저장할 이름표를 만들어요.'],[/^\s*(function|def)\s|=>/,'함수 정의','여러 명령을 하나의 기능으로 묶어요.'],[/console\.log|print\s*\(/,'출력','값을 화면(콘솔)에 보여줘요.'],[/^\s*if\b/,'조건문','조건이 참일 때만 코드를 실행해요.'],[/^\s*(for|while)\b/,'반복문','같은 동작을 여러 번 반복해요.'],[/^\s*return\b/,'반환','함수의 결과를 돌려주고 끝내요.'],[/^\s*(import|from)\b/,'가져오기','다른 파일이나 라이브러리의 기능을 가져와요.'],[/:\s*[^;]+;|\{\s*$/,'스타일/블록','CSS 속성이나 코드 블록이에요.']];
+async function explainLine(n){
+ cur=n;const key=level+':'+n,my=++tok;
+ if(cache.has(key))return renderLine(n,cache.get(key));
+ loading(n+'번째 줄을 읽는 중');
+ let res;
+ try{
+  const s=await getSample();
+  if(!s)throw{code:'not_granted'};
+  res=await s.json(`당신은 친절한 코드 선생님입니다. 아래 ${lang} 코드 전체를 문맥으로 참고해, ${n}번째 줄 하나만 한국어로 설명하세요.\n설명 수준: ${LEVELS[level].guide}\n- ${LEVELS[level].fmt}
+- title도 수준에 맞게 쓰세요(초급: 쉬운 말, 전문가: 기술 용어).\n오직 JSON만 출력: {"title":"짧은 제목","desc":"설명"}\n\n코드:\n${numbered()}\n\n설명할 줄: ${n}번 → ${lines[n-1]}`,{modelTier:'quick',cache:false});
+  if(!res||!res.desc)throw{code:'bad'};
+  res.mode='ai';
+ }catch(e){
+  if(my!==tok)return;
+  if(e&&e.code==='not_granted'){const r=RULES.find(x=>x[0].test(lines[n-1]));res={title:r?r[1]:'코드 한 줄',desc:r?r[2]:'주변 코드와 함께 동작하는 줄이에요.',mode:'basic'}}
+  else return aiErr(e);
+ }
+ if(my!==tok)return;
+ cache.set(key,res);renderLine(n,res);
+}
+function renderLine(n,r){
+ if(cur!==n)return;
+ output.innerHTML=`<div class="card"><div class="card-head"><span class="badge">${n}번째 줄</span><span class="tag">${esc(r.title||'설명')}</span></div><code>${esc(lines[n-1].trim())}</code><p>${esc(r.desc)}</p></div>`
+ +(r.mode==='basic'?'<div class="notice">AI를 사용할 수 없어 기본 규칙으로 설명했어요.</div>':'')
+ +`<button class="link" id="back">${ic('back')}전체 요약 보기</button>`;
+ $('back').onclick=showOverview;
+}
+</script>
+</body>
+</html>
