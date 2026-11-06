@@ -546,6 +546,22 @@ export default function App() {
 
   const levelMeta = LEVELS.find((l) => l.id === level)!;
 
+  // 🤖 Qwen: 고른 줄을 요청대로 고치는 방법 (초급자는 "왜 여기서 사용되었나요?" 아래, 나머지는 설명 맨 아래)
+  const qwenPanel = isEditing ? null : (
+    <QwenEditAssistant
+      code={analyzedCode}
+      startLine={rangeStart}
+      endLine={rangeEnd}
+      fileName={loadedFileName}
+      onApply={(newCode, start) => {
+        setInputCode(newCode);
+        void handleRunAnalysis(newCode);
+        setSelectedLineNum(start);
+        setAppliedNotice(`${start}번째 줄을 바꾼 코드로 고치고, 해석도 새 코드에 맞게 다시 만들었어요.`);
+      }}
+    />
+  );
+
   return (
     <div className="min-h-screen bg-[#181A24] text-[#E6E8F0] flex flex-col font-sans selection:bg-[#7C6CF6] selection:text-white">
       {/* 1. 상단 헤더 */}
@@ -906,22 +922,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 🤖 Qwen: 고른 줄을 요청대로 고치는 방법 */}
-              {!isEditing && (
-                <QwenEditAssistant
-                  code={analyzedCode}
-                  startLine={rangeStart}
-                  endLine={rangeEnd}
-                  fileName={loadedFileName}
-                  onApply={(newCode, start) => {
-                    setInputCode(newCode);
-                    void handleRunAnalysis(newCode);
-                    setSelectedLineNum(start);
-                    setAppliedNotice(`${start}번째 줄을 바꾼 코드로 고치고, 아래 해석도 새 코드에 맞게 다시 만들었어요.`);
-                  }}
-                />
-              )}
-
               {/* 🟢 초급자 */}
               {level === 'beginner' && (
                 <div className="space-y-3">
@@ -946,6 +946,8 @@ export default function App() {
                     </p>
                   </InfoBlock>
 
+                  {qwenPanel}
+
                   {selectedLine.hasError ? (
                     <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/40 space-y-2.5">
                       <div className="flex items-center gap-2 text-xs font-bold text-red-300">
@@ -969,7 +971,8 @@ export default function App() {
                     </div>
                   )}
 
-                  {selectedLine.beginner.betterExample && (
+                  {/* 모범 코드는 이 줄에 오류가 있을 때만 보여줌 */}
+                  {selectedLine.hasError && selectedLine.beginner.betterExample && (
                     <InfoBlock
                       icon={<CheckCircle2 className="w-3.5 h-3.5 text-[#A99CFF]" />}
                       title="권장하는 모범 코드"
@@ -1152,6 +1155,8 @@ export default function App() {
                   )}
                 </div>
               )}
+
+              {level !== 'beginner' && qwenPanel}
             </div>
           </section>
         </div>
