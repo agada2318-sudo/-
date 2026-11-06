@@ -10,6 +10,7 @@ import {
   interpretSingleLineFallback,
 } from './src/utils/codeAnalyzer.ts';
 import { LineInterpretation, SimpleCodeAnalysis } from './src/types.ts';
+import { qwenStatus, suggestEdit } from './qwen.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,6 +35,34 @@ async function startServer() {
   // Cloud Run / Kubernetes 헬스체크 엔드포인트
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // Qwen2.5-1.5B-Instruct: 고른 줄을 사용자 요청대로 고치는 방법 안내
+  app.get('/api/qwen/status', (_req, res) => {
+    res.json(qwenStatus());
+  });
+
+  app.post('/api/qwen/edit', async (req, res) => {
+    const { code, startLine, endLine, request, fileName } = req.body ?? {};
+    if (typeof code !== 'string' || typeof request !== 'string' || !request.trim()) {
+      return res.status(400).json({ error: '코드와 요청 내용을 보내주세요.' });
+    }
+    if (!Number.isFinite(startLine) || !Number.isFinite(endLine)) {
+      return res.status(400).json({ error: '줄 번호가 올바르지 않아요.' });
+    }
+    try {
+      const result = await suggestEdit({
+        code,
+        startLine,
+        endLine,
+        request: request.trim().slice(0, 500),
+        fileName: typeof fileName === 'string' ? fileName : undefined,
+      });
+      res.json(result);
+    } catch (err) {
+      console.error('[qwen] edit failed:', err);
+      res.status(500).json({ error: err instanceof Error ? err.message : 'Qwen 실행 중 오류가 났어요.' });
+    }
   });
 
   app.post('/api/analyze-code', async (req, res) => {

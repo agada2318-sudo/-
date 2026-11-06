@@ -466,6 +466,51 @@ const HTML_MASTER_DICTIONARY: Record<string, TagMasterInfo> = {
   },
 };
 
+// ---------- 제목 h2 ~ h6 ----------
+// h1만 설명이 있으면 "<h1> → <h2>"로 고쳤을 때 해석이 갑자기 빈약해지므로, 단계별로 같은 수준의 설명을 만들어 둠
+const HEADING_INFO: Record<number, { name: string; size: string; role: string; use: string }> = {
+  2: { name: '중간 제목 (Heading 2)', size: '두 번째로 큰', role: '큰 주제(h1) 아래의 구역 제목', use: '페이지를 큰 구역으로 나눌 때' },
+  3: { name: '소제목 (Heading 3)', size: '세 번째로 큰', role: 'h2 구역 안의 작은 소제목', use: '한 구역 안을 더 작은 주제로 나눌 때' },
+  4: { name: '작은 소제목 (Heading 4)', size: '중간 크기의', role: 'h3 아래의 세부 항목 제목', use: '세부 항목에 제목을 붙일 때' },
+  5: { name: '아주 작은 제목 (Heading 5)', size: '작은', role: 'h4 아래의 아주 세부적인 제목', use: '깊은 단계의 제목이 필요할 때 (잘 쓰이지 않음)' },
+  6: { name: '가장 작은 제목 (Heading 6)', size: '가장 작은', role: '제목 단계의 맨 마지막', use: '가장 깊은 단계의 제목이 필요할 때 (거의 쓰이지 않음)' },
+};
+
+for (const [lvStr, info] of Object.entries(HEADING_INFO)) {
+  const lv = Number(lvStr);
+  const t = `h${lv}`;
+  const parent = `h${lv - 1}`;
+  HTML_MASTER_DICTIONARY[t] = {
+    name: info.name,
+    subBeginner: `${info.size} 글씨로 ${info.role}을 화면에 표시합니다.`,
+    subIntermediate: `Level ${lv} Heading (${parent} 아래 단계의 제목 노드)`,
+    subAdvanced: `[OUTLINE] Heading Level ${lv}. 바로 위 단계(${parent})를 건너뛰지 않았는지 점검.`,
+    easyExplanation: `${info.size} 글씨로 제목을 출력하는 태그입니다.`,
+    whyUsedHere: `${info.use} 쓰는 ${info.role}입니다.`,
+    wrongExample: {
+      code: `<p style="font-size:20px; font-weight:bold;">소제목</p>`,
+      reason: `p 태그의 글자만 키우면 화면엔 제목처럼 보여도, 검색엔진과 스크린 리더는 이것을 ${t} 단계의 제목으로 알아보지 못합니다.`,
+    },
+    betterExample: {
+      code: `<${t}>소제목</${t}>`,
+      reason: `제목은 h1 → h2 → h3 순서로 한 단계씩 내려가며 쓰는 것이 좋습니다. 글씨 크기만 바꾸고 싶다면 단계를 건너뛰지 말고 CSS의 font-size를 쓰세요.`,
+    },
+    codeCheckVerdict: `${t} 제목으로 올바르게 선언되었습니다. 이 제목 위에 ${parent}가 먼저 나오는지(단계를 건너뛰지 않았는지) 확인하세요.`,
+    betterRefactor: {
+      code: `<${t} id="section-title">소제목</${t}>`,
+      reason: 'id를 붙여 두면 목차 링크(#section-title)나 aria-labelledby로 이 구역 제목을 연결할 수 있습니다.',
+    },
+    suggestedAdditions: [],
+    bugIssueTitle: 'Heading 계층 구조 점검',
+    bugIssueDetail: `${parent} 없이 바로 ${t}를 쓰면(단계 건너뛰기) 스크린 리더의 문서 구조 탐색이 끊어집니다. 크기 조절 목적이라면 CSS font-size를 사용하세요.`,
+    bugSeverity: 'none',
+    missingTitle: '누락 없음',
+    missingSnippet: '',
+    missingReason: `${t} 제목 태그 정상 선언`,
+    recommendedPatch: `<${t} id="section-title">소제목</${t}>`,
+  };
+}
+
 const HTML_ATTR_DICTIONARY: Record<string, string> = {
   charset: '글자가 깨지지 않도록 문자 인코딩(UTF-8)을 지정합니다.',
   lang: '웹페이지의 기본 언어(ko=한국어, en=영어)를 브라우저에 선언합니다.',
@@ -634,6 +679,14 @@ const HTML_LEVEL_DEPTH: Record<string, LevelDepth> = {
       'type 기본값은 "submit"으로 form owner의 implicit submission을 트리거합니다. submit 이벤트는 버블링되며 preventDefault() 후 fetch로 처리하는 SPA 패턴이 일반적입니다. 네이티브 button은 키보드 포커스, Enter/Space 활성화, role=button을 기본 제공하므로 div+onClick 대체는 접근성 회귀를 유발합니다.',
   },
 };
+
+for (const lv of [2, 3, 4, 5, 6]) {
+  HTML_LEVEL_DEPTH[`h${lv}`] = {
+    isBasic: false,
+    howItWorks: `브라우저는 h${lv}에 굵은 글꼴과 h${lv - 1}보다 한 단계 작은 기본 글씨 크기를 적용하고, 문서 구조에서 ${lv}단계 제목으로 등록합니다. 숫자가 클수록 글씨가 작아지고(h1 > h2 > … > h6), 스크린리더와 검색엔진은 이 단계를 따라 내용의 구조를 파악합니다.`,
+    technicalDetail: `접근성 트리에 role="heading", aria-level=${lv}로 노출됩니다. UA 스타일시트 기본값은 h2 1.5em, h3 1.17em, h4 1em, h5 0.83em, h6 0.67em이며, 레벨을 건너뛰면(h${lv - 1} 없이 h${lv}) WCAG 1.3.1 Info and Relationships 관점에서 문서 아웃라인이 왜곡됩니다. 크기 조절만이 목적이면 heading 레벨이 아닌 font-size로 처리해야 합니다.`,
+  };
+}
 
 export function getLevelDepth(line: string): LevelDepth {
   const trimmed = line.trim();
@@ -870,8 +923,12 @@ export function describeHtmlForBeginner(
     const easy = text
       ? `${size} ${josa(q(text), '을/를')} 출력하는 태그입니다.`
       : `${size} 제목을 출력하는 태그입니다.`;
+    const purpose =
+      tagName === 'h1'
+        ? `사용자가 이 구역에 들어왔을 때 ${josa(q(text), '을/를')} 가장 먼저 눈에 띄게 보여주려고 사용되었습니다.`
+        : `큰 제목 아래에서 ${josa(q(text), '을/를')} 하나의 구역 제목으로 나눠 보여주려고 사용되었습니다.`;
     const why = text
-      ? `이 화면에서 ${order} 글자를 표시하는 태그입니다. 사용자가 이 구역에 들어왔을 때 ${josa(q(text), '을/를')} 가장 먼저 눈에 띄게 보여주려고 사용되었습니다.`
+      ? `이 화면에서 ${order} 글자를 표시하는 태그입니다. ${purpose}`
       : `이 화면에서 ${order} 글자를 표시하는 태그입니다.`;
     return { easy, why };
   }

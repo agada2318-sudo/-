@@ -47,6 +47,7 @@ const SECONDARY_BTN =
 const PRIMARY_BTN =
   'py-3 text-sm font-bold text-white bg-[#7C6CF6] hover:bg-[#6B5AE8] disabled:opacity-40 disabled:cursor-not-allowed rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap';
 import { buildFallbackAnalysis } from './utils/codeAnalyzer.ts';
+import QwenEditAssistant from './components/QwenEditAssistant.tsx';
 
 // 레벨 아이콘: 막대 3개 중 채워진 개수로 수준 표시 (초급 1칸 · 중급 2칸 · 전공 3칸)
 function LevelBars({ filled, active }: { filled: number; active: boolean }) {
@@ -82,6 +83,7 @@ export default function App() {
     SAMPLE_PRESETS[0].data
   );
   const [selectedLineNum, setSelectedLineNum] = useState<number>(1);
+  const [rangeEndNum, setRangeEndNum] = useState<number | null>(null); // Shift+클릭으로 고른 범위의 다른 끝
   const [isEditing, setIsEditing] = useState<boolean>(false); // 코드 변경/편집 모드 여부
 
   // ---------- 여러 파일 ----------
@@ -103,6 +105,7 @@ export default function App() {
   const [showExamples, setShowExamples] = useState<boolean>(false); // 예시 코드 메뉴 열림 여부
   const [isDragging, setIsDragging] = useState<boolean>(false); // 파일을 끌어오는 중인지
   const [dropMessage, setDropMessage] = useState<string | null>(null); // 파일 불러오기 안내/오류
+  const [appliedNotice, setAppliedNotice] = useState<string | null>(null); // Qwen 수정 적용 후 안내
   const dragDepth = useRef(0);
 
   const errorLines = analysis.lines.filter((l) => l.hasError).map((l) => l.lineNumber);
@@ -110,6 +113,16 @@ export default function App() {
   const selectedLine: LineInterpretation =
     analysis.lines.find((l) => l.lineNumber === selectedLineNum) ||
     analysis.lines[0];
+
+  // Qwen 수정 요청에 쓸 줄 범위 (Shift+클릭으로 여러 줄 선택)
+  const rangeStart = Math.min(selectedLine.lineNumber, rangeEndNum ?? selectedLine.lineNumber);
+  const rangeEnd = Math.max(selectedLine.lineNumber, rangeEndNum ?? selectedLine.lineNumber);
+  const analyzedCode = analysis.lines.map((l) => l.code).join('\n');
+
+  // 코드가 바뀌면 범위 선택 해제
+  useEffect(() => {
+    setRangeEndNum(null);
+  }, [analysis]);
 
   // 코드 입력 카드 밖에 파일을 떨어뜨려도 브라우저가 파일을 열어버리지 않도록 막기
   useEffect(() => {
@@ -123,6 +136,13 @@ export default function App() {
       window.removeEventListener('drop', block);
     };
   }, []);
+
+  // 수정 적용 안내는 5초 뒤 사라짐
+  useEffect(() => {
+    if (!appliedNotice) return;
+    const id = window.setTimeout(() => setAppliedNotice(null), 5000);
+    return () => window.clearTimeout(id);
+  }, [appliedNotice]);
 
   // 안내 메시지는 4초 뒤 자동으로 사라짐
   useEffect(() => {
@@ -139,9 +159,11 @@ export default function App() {
       if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
       if (e.key === 'ArrowDown') {
         e.preventDefault();
+        setRangeEndNum(null);
         setSelectedLineNum((n) => Math.min(analysis.lines.length, n + 1));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
+        setRangeEndNum(null);
         setSelectedLineNum((n) => Math.max(1, n - 1));
       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         // 여러 파일을 열었을 때 ← → 로 파일 넘기기
@@ -247,6 +269,18 @@ export default function App() {
     navigator.clipboard.writeText(snippet);
     setCopiedSnippet(key);
     window.setTimeout(() => setCopiedSnippet(null), 2000);
+  };
+
+  // 어렵지 않은 기본 코드라 해석을 건너뛸 줄인지 (중급자·전공자)
+  //  전공자는 기본 코드라도 오류·결함·누락이 있으면 점검 결과를 그대로 보여줌
+  const isSkippedLine = (line: LineInterpretation) => {
+    if (level === 'beginner' || line.isBlank || !line.intermediate.isBasic || line.hasError) return false;
+    if (level === 'advanced') {
+      const a = line.advanced;
+      if (a.bugAudit?.hasIssue && a.bugAudit.severity !== 'none') return false;
+      if (a.missingAudit?.hasMissing) return false;
+    }
+    return true;
   };
 
   // 현재 레벨에 맞는 줄 아래 주석 반환
@@ -698,16 +732,25 @@ export default function App() {
                     <div className="min-w-full w-max py-2">
                     {analysis.lines.map((line) => {
                       const isSelected = line.lineNumber === selectedLine.lineNumber;
+                      const isInRange =
+                        !isSelected && line.lineNumber >= rangeStart && line.lineNumber <= rangeEnd;
                       const subComment = getSubCommentByLevel(line);
                       const isLineError = Boolean(line.hasError);
-                      const isDimmed =
-                        level === 'intermediate' && line.intermediate.isBasic && !isSelected && !isLineError;
+                      const isDimmed = isSkippedLine(line) && !isSelected;
 
                       return (
                         <div
                           key={line.lineNumber}
                           id={`code-line-${line.lineNumber}`}
-                          onClick={() => setSelectedLineNum(line.lineNumber)}
+                          onClick={(e) => {
+                            if (e.shiftKey) {
+                              window.getSelection()?.removeAllRanges();
+                              setRangeEndNum(line.lineNumber === selectedLine.lineNumber ? null : line.lineNumber);
+                            } else {
+                              setSelectedLineNum(line.lineNumber);
+                              setRangeEndNum(null);
+                            }
+                          }}
                           className={`w-full py-1.5 pr-3 cursor-pointer flex flex-col gap-0.5 border-l-2 transition-colors ${isDimmed ? 'opacity-40 ' : ''}${
                             isLineError
                               ? isSelected
@@ -715,6 +758,8 @@ export default function App() {
                                 : 'bg-red-500/5 border-red-500/50 hover:bg-red-500/10'
                               : isSelected
                               ? 'bg-[#7C6CF6]/15 border-[#8B7CFF]'
+                              : isInRange
+                              ? 'bg-[#7C6CF6]/10 border-[#8B7CFF]/50'
                               : 'border-transparent hover:bg-white/[0.03]'
                           }`}
                         >
@@ -767,7 +812,7 @@ export default function App() {
 
                   <p className="text-[11px] text-[#7D839C] flex items-center gap-1.5">
                     <Sparkles className="w-3 h-3 text-[#8B7CFF]" />
-                    {level === 'intermediate'
+                    {level !== 'beginner'
                       ? '흐리게 표시된 줄은 기본 코드라 설명을 생략했어요. 방향키(↑ ↓)로도 이동할 수 있어요.'
                       : '줄을 누르면 오른쪽에 그 줄의 설명이 나와요. 방향키(↑ ↓)로도 이동할 수 있어요.'}
                   </p>
@@ -802,6 +847,13 @@ export default function App() {
             </div>
 
             <div className="code-scroll p-4 sm:p-5 space-y-4 max-h-[calc(100vh-10rem)] overflow-y-auto">
+              {appliedNotice && (
+                <div className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  {appliedNotice}
+                </div>
+              )}
+
               {/* 선택된 줄 카드 */}
               <div className="p-4 rounded-xl bg-[#232637] border border-[#30344A] space-y-3">
                 <div className="flex items-center justify-between gap-2">
@@ -853,6 +905,22 @@ export default function App() {
                   )}
                 </div>
               </div>
+
+              {/* 🤖 Qwen: 고른 줄을 요청대로 고치는 방법 */}
+              {!isEditing && (
+                <QwenEditAssistant
+                  code={analyzedCode}
+                  startLine={rangeStart}
+                  endLine={rangeEnd}
+                  fileName={loadedFileName}
+                  onApply={(newCode, start) => {
+                    setInputCode(newCode);
+                    void handleRunAnalysis(newCode);
+                    setSelectedLineNum(start);
+                    setAppliedNotice(`${start}번째 줄을 바꾼 코드로 고치고, 아래 해석도 새 코드에 맞게 다시 만들었어요.`);
+                  }}
+                />
+              )}
 
               {/* 🟢 초급자 */}
               {level === 'beginner' && (
@@ -932,7 +1000,8 @@ export default function App() {
               )}
 
               {/* 🔵 중급자 */}
-              {level === 'intermediate' && selectedLine.intermediate.isBasic && (
+              {/* 중급자·전공자: 어렵지 않은 기본 코드는 해석 생략 */}
+              {isSkippedLine(selectedLine) && (
                 <div className="px-4 py-3.5 rounded-xl bg-[#232637] border border-dashed border-[#3A3F58] text-xs text-[#9AA0B8] flex items-start gap-2">
                   <MinusCircle className="w-4 h-4 shrink-0 text-[#6E7491]" />
                   <span>
@@ -942,7 +1011,7 @@ export default function App() {
                 </div>
               )}
 
-              {level === 'intermediate' && !selectedLine.intermediate.isBasic && (
+              {level === 'intermediate' && !isSkippedLine(selectedLine) && (
                 <div className="space-y-3">
                   <InfoBlock icon={<Settings2 className="w-3.5 h-3.5 text-[#A99CFF]" />} title="어떻게 작동하나요?">
                     <p className="text-sm text-[#E6E8F0] leading-relaxed">
@@ -1003,7 +1072,7 @@ export default function App() {
               )}
 
               {/* 🟣 전공자 */}
-              {level === 'advanced' && (
+              {level === 'advanced' && !isSkippedLine(selectedLine) && (
                 <div className="space-y-3">
                   {selectedLine.advanced.technicalDetail && (
                     <InfoBlock icon={<Microscope className="w-3.5 h-3.5 text-[#A99CFF]" />} title="기술 분석">
