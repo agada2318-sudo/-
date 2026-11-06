@@ -1,0 +1,7 @@
+.env
+.env.local
+.env.*.local
+dev.log
+dist-server
+codemate
+.git
